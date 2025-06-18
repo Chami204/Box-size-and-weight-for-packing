@@ -9,21 +9,36 @@ st.title("📦 Profile Packing Optimizer - Maximize Fit by Weight")
 # ---------- 1. GAYLORD CONSTRAINTS ----------
 st.header("1️⃣ Gaylord Constraints")
 
-max_weight = st.number_input("Maximum Gaylord Weight (kg)", min_value=0.1, format="%.2f")
-max_gaylord_width = st.number_input("Maximum Gaylord Width (mm)", min_value=1)
-max_gaylord_height = st.number_input("Maximum Gaylord Height (mm)", min_value=1)
-max_gaylord_length = st.number_input("Maximum Gaylord Length (mm)", min_value=1)
+col1, col2, col3 = st.columns(3)
+with col1:
+    max_weight = st.number_input("Maximum Gaylord Weight (kg)", min_value=0.1, value=1000.0, format="%.2f")
+with col2:
+    max_gaylord_width = st.number_input("Maximum Gaylord Width (mm)", min_value=1, value=1200)
+with col3:
+    max_gaylord_height = st.number_input("Maximum Gaylord Height (mm)", min_value=1, value=1200)
+max_gaylord_length = st.number_input("Maximum Gaylord Length (mm)", min_value=1, value=1200)
 
-# ---------- 2. PROFILE + CUT LENGTH INPUT ----------
-st.header("2️⃣ Profile + Cut Lengths Input Table")
+# ---------- 2. PALLET CONSTRAINTS ----------
+st.header("2️⃣ Pallet Constraints")
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    pallet_width = st.number_input("Pallet Width (mm)", min_value=1, value=1100)
+with col2:
+    pallet_length = st.number_input("Pallet Length (mm)", min_value=1, value=1100)
+with col3:
+    pallet_max_height = st.number_input("Pallet Max Height (mm)", min_value=1, value=2000)
+
+# ---------- 3. PROFILE + CUT LENGTH INPUT ----------
+st.header("3️⃣ Profile + Cut Lengths Input Table")
 
 default_data = pd.DataFrame({
-    "Profile Name": [""],
-    "Unit Weight (kg/m)": [0.0],
-    "Profile Width (mm)": [0.0],
-    "Profile Height (mm)": [0.0],
-    "Cut Length": [0.0],
-    "Cut Unit": ["mm"],
+    "Profile Name": ["Profile A", "Profile B"],
+    "Unit Weight (kg/m)": [1.5, 2.0],
+    "Profile Width (mm)": [50.0, 60.0],
+    "Profile Height (mm)": [60.0, 70.0],
+    "Cut Length": [2500, 3000],
+    "Cut Unit": ["mm", "mm"],
 })
 
 editable_data = st.data_editor(
@@ -46,9 +61,10 @@ def convert_to_mm(length, unit):
         "inches": length * 25.4
     }.get(unit, length)
 
-# ---------- 3. OPTIMIZATION ----------
-if st.button("🚀 Run Optimization"):
+# ---------- 4. OPTIMIZATION ----------
+if st.button("🚀 Run Optimization", type="primary"):
     results = []
+    pallet_results = []
 
     for _, row in editable_data.iterrows():
         if row["Cut Length"] <= 0 or row["Unit Weight (kg/m)"] <= 0:
@@ -81,7 +97,6 @@ if st.button("🚀 Run Optimization"):
                 "W x H x L Arrangement": "-",
                 "Orientation": "-",
                 "Box Cube Deviation (mm)": "-",
-                "Fits Pallet (≤1100x700)": "❌"
             })
             continue
 
@@ -106,8 +121,10 @@ if st.button("🚀 Run Optimization"):
                     box_h = dims[orientation[1]]
                     box_l = dims[orientation[2]]
 
-                    # Check max width, height, and length constraints
-                    if box_w > max_gaylord_width or box_h > max_gaylord_height or box_l > max_gaylord_length:
+                    # Check max constraints
+                    if (box_w > max_gaylord_width or 
+                        box_h > max_gaylord_height or 
+                        box_l > max_gaylord_length):
                         continue
 
                     wh_diff = abs(box_w - box_h)
@@ -143,12 +160,64 @@ if st.button("🚀 Run Optimization"):
                 "W x H x L Arrangement": "-",
                 "Orientation": "-",
                 "Box Cube Deviation (mm)": "-",
-                "Fits Pallet (≤1100x700)": "❌"
             })
             continue
 
-        fits_pallet = best_box["Box Width (mm)"] <= 1100 and best_box["Box Height (mm)"] <= 700
+        # Calculate pallet fit for this box
+        box_dims = [
+            best_box["Box Width (mm)"],
+            best_box["Box Height (mm)"],
+            best_box["Box Length (mm)"]
+        ]
+        max_boxes = 0
+        best_pallet = None
+        best_arrangement = ""
+        
+        # Try all possible box orientations
+        for i, j, k in permutations([0, 1, 2]):
+            dim1, dim2, dim3 = box_dims[i], box_dims[j], box_dims[k]
+            
+            # Try both base orientations
+            for base_orientation in [(dim1, dim2), (dim2, dim1)]:
+                base_w, base_l = base_orientation
+                height = dim3
+                
+                if height > pallet_max_height:
+                    continue
+                    
+                # Calculate how many fit in base area
+                w_fit = pallet_width // base_w
+                l_fit = pallet_length // base_l
+                base_fit = w_fit * l_fit
+                
+                # Calculate vertical stacking
+                height_fit = pallet_max_height // height
+                total_fit = base_fit * height_fit
+                
+                if total_fit > max_boxes:
+                    max_boxes = total_fit
+                    best_pallet = {
+                        "base_width": base_w,
+                        "base_length": base_l,
+                        "height": height,
+                        "w_fit": w_fit,
+                        "l_fit": l_fit,
+                        "height_fit": height_fit
+                    }
+                    best_arrangement = f"{w_fit}×{l_fit} (base) × {height_fit} (height)"
 
+        # Add to pallet results
+        pallet_results.append({
+            "Profile": profile_name,
+            "Box Dimensions (mm)": f"{box_dims[0]}×{box_dims[1]}×{box_dims[2]}",
+            "Max Boxes/Pallet": max_boxes,
+            "Box Arrangement": best_arrangement,
+            "Box Orientation": f"{best_pallet['base_width']}×{best_pallet['base_length']} (base)",
+            "Box Height": f"{best_pallet['height']} mm",
+            "Total Items": max_boxes * best_box["Fit Items"]
+        })
+
+        # Add to main results
         results.append({
             "Profile Name": profile_name,
             "Cut Length": original,
@@ -159,25 +228,55 @@ if st.button("🚀 Run Optimization"):
             "Box Height (mm)": best_box["Box Height (mm)"],
             "Box Length (mm)": best_box["Box Length (mm)"],
             "Items Fit in Box": best_box["Fit Items"],
-            "W x H x L Arrangement": f"{best_box['W Count']} x {best_box['H Count']} x {best_box['L Count']}",
+            "W x H x L Arrangement": f"{best_box['W Count']}×{best_box['H Count']}×{best_box['L Count']}",
             "Orientation": best_box["Orientation"],
             "Box Cube Deviation (mm)": int(min_deviation),
-            "Fits Pallet (≤1100x700)": "✅" if fits_pallet else "❌"
         })
 
     if results:
+        # Show main results
+        st.success("✅ Gaylord Packing Optimization Complete")
         df = pd.DataFrame(results)
-        st.success("✅ Optimization Complete")
         st.dataframe(df, use_container_width=True)
+        
+        # Show pallet results
+        st.success("📦 Pallet Packing Optimization")
+        st.write(f"**Pallet Size:** {pallet_width}×{pallet_length}×{pallet_max_height} mm")
+        
+        if pallet_results:
+            pallet_df = pd.DataFrame(pallet_results)
+            st.dataframe(pallet_df, use_container_width=True)
+            
+            # Add visual feedback
+            for result in pallet_results:
+                efficiency = ""
+                if result["Max Boxes/Pallet"] > 15:
+                    efficiency = "🏆 Excellent space utilization"
+                elif result["Max Boxes/Pallet"] > 8:
+                    efficiency = "👍 Good packing density"
+                elif result["Max Boxes/Pallet"] > 0:
+                    efficiency = "⚠️ Low packing density"
+                else:
+                    efficiency = "❌ Does not fit on pallet"
+                
+                st.info(
+                    f"**{result['Profile']}**: {result['Max Boxes/Pallet']} boxes/pallet · "
+                    f"{result['Total Items']} total items · {efficiency}"
+                )
+        else:
+            st.warning("No valid pallet configurations found")
 
+        # Download functionality
         from io import BytesIO
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name="Packing Plan")
+            df.to_excel(writer, index=False, sheet_name="Gaylord Packing")
+            if pallet_results:
+                pd.DataFrame(pallet_results).to_excel(writer, index=False, sheet_name="Pallet Packing")
         st.download_button(
-            label="📥 Download Excel",
+            label="📥 Download Full Report",
             data=output.getvalue(),
-            file_name=f"Packing_Results.xlsx",
+            file_name="Packing_Optimization_Report.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     else:
