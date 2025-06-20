@@ -139,7 +139,7 @@ if st.toggle("Enable Consolidated Packing by Profile", value=False):
                 boxes.append((density, box_group, total_weight))
             if valid:
                 avg_density = sum([b[0] for b in boxes]) / len(boxes)
-                if avg_density > best_density and avg_density >= 0.7:
+                if avg_density > best_density and avg_density >= 0.5:
                     best_result = boxes
                     best_density = avg_density
 
