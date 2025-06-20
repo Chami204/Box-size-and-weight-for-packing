@@ -144,7 +144,7 @@ if st.toggle("Enable Consolidated Packing by Profile", value=False):
                     best_density = avg_density
 
         if not best_result:
-            st.warning(f"⚠️ Could not pack profile '{profile_name}' within {max_boxes} box(es) at ≥70% density.")
+            st.warning(f"⚠️ Could not pack profile '{profile_name}' within {max_boxes} box(es) at ≥50% density.")
             continue
 
         for idx, (density, group, weight) in enumerate(best_result, 1):
