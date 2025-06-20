@@ -9,21 +9,36 @@ st.title("📦 Profile Packing Optimizer - Maximize Fit by Weight")
 # ---------- 1. GAYLORD CONSTRAINTS ----------
 st.header("1️⃣ Gaylord Constraints")
 
-max_weight = st.number_input("Maximum Gaylord Weight (kg)", min_value=0.1, format="%.2f")
-max_gaylord_width = st.number_input("Maximum Gaylord Width (mm)", min_value=1)
-max_gaylord_height = st.number_input("Maximum Gaylord Height (mm)", min_value=1)
-max_gaylord_length = st.number_input("Maximum Gaylord Length (mm)", min_value=1)
+col1, col2, col3 = st.columns(3)
+with col1:
+    max_weight = st.number_input("Maximum Gaylord Weight (kg)", min_value=0.1, value=1000.0, format="%.2f")
+with col2:
+    max_gaylord_width = st.number_input("Maximum Gaylord Width (mm)", min_value=1, value=1200)
+with col3:
+    max_gaylord_height = st.number_input("Maximum Gaylord Height (mm)", min_value=1, value=1200)
+max_gaylord_length = st.number_input("Maximum Gaylord Length (mm)", min_value=1, value=1200)
 
-# ---------- 2. PROFILE + CUT LENGTH INPUT ----------
-st.header("2️⃣ Profile + Cut Lengths Input Table")
+# ---------- 2. PALLET CONSTRAINTS ----------
+st.header("2️⃣ Pallet Constraints")
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    pallet_width = st.number_input("Pallet Width (mm)", min_value=1, value=1100)
+with col2:
+    pallet_length = st.number_input("Pallet Length (mm)", min_value=1, value=1100)
+with col3:
+    pallet_max_height = st.number_input("Pallet Max Height (mm)", min_value=1, value=2000)
+
+# ---------- 3. PROFILE + CUT LENGTH INPUT ----------
+st.header("3️⃣ Profile + Cut Lengths Input Table")
 
 default_data = pd.DataFrame({
-    "Profile Name": [""],
-    "Unit Weight (kg/m)": [0.0],
-    "Profile Width (mm)": [0.0],
-    "Profile Height (mm)": [0.0],
-    "Cut Length": [0.0],
-    "Cut Unit": ["mm"],
+    "Profile Name": ["Profile A", "Profile B"],
+    "Unit Weight (kg/m)": [1.5, 2.0],
+    "Profile Width (mm)": [50.0, 60.0],
+    "Profile Height (mm)": [60.0, 70.0],
+    "Cut Length": [2500, 3000],
+    "Cut Unit": ["mm", "mm"],
 })
 
 editable_data = st.data_editor(
@@ -59,12 +74,10 @@ def all_partitions(seq, max_parts):
     result.append([seq])
     return result
 
-# ---------- 3. OPTIMIZATION ----------
-if st.button("🚀 Run Optimization"):
-    results = []
-
+# Additional packing logic for cut length consolidation
+st.header("4️⃣ Box Consolidation (Optional)")
+if st.toggle("Enable Consolidated Packing by Profile", value=False):
     grouped = editable_data.groupby("Profile Name")
-
     for profile_name, group in grouped:
         group = group.reset_index(drop=True)
         valid_rows = group[(group["Cut Length"] > 0) & (group["Unit Weight (kg/m)"] > 0)]
@@ -77,7 +90,6 @@ if st.button("🚀 Run Optimization"):
         profile_width = valid_rows.iloc[0]["Profile Width (mm)"]
         profile_height = valid_rows.iloc[0]["Profile Height (mm)"]
 
-        # Calculate max items across all cut lengths
         items_info = []
         for _, row in valid_rows.iterrows():
             cut_len_mm = convert_to_mm(row["Cut Length"], row["Cut Unit"])
@@ -90,7 +102,6 @@ if st.button("🚀 Run Optimization"):
         if not items_info:
             continue
 
-        # Decide max boxes allowed
         if num_lengths <= 5:
             max_boxes = 1
         elif num_lengths <= 10:
@@ -117,7 +128,7 @@ if st.button("🚀 Run Optimization"):
                     l = item["cut_mm"]
                     w = profile_width
                     h = profile_height
-                    vol = (l * w * h) / 1e9  # m³
+                    vol = (l * w * h) / 1e9
                     total_volume += vol
                     total_weight += item["wt"]
                 max_box_vol = (max_gaylord_width * max_gaylord_height * max_gaylord_length) / 1e9
@@ -136,32 +147,11 @@ if st.button("🚀 Run Optimization"):
             st.warning(f"⚠️ Could not pack profile '{profile_name}' within {max_boxes} box(es) at ≥70% density.")
             continue
 
-        # Format result
         for idx, (density, group, weight) in enumerate(best_result, 1):
             cuts = ", ".join([g["original"] for g in group])
-            results.append({
-                "Profile Name": profile_name,
-                "Box #": idx,
-                "Cut Lengths": cuts,
-                "Items Fit in Box": len(group),
-                "Box Density": f"{density*100:.1f}%",
-                "Estimated Weight (kg)": round(weight, 2),
-            })
-
-    if results:
-        df = pd.DataFrame(results)
-        st.success("✅ Optimization Complete")
-        st.dataframe(df, use_container_width=True)
-
-        from io import BytesIO
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name="Packing Plan")
-        st.download_button(
-            label="📥 Download Excel",
-            data=output.getvalue(),
-            file_name="Packing_Results_Grouped.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-    else:
-        st.warning("⚠️ No valid packing configuration found. Please check your inputs.")
+            st.info(
+                f"**{profile_name}** - Box #{idx}: \n"
+                f"Cut Lengths: {cuts}\n"
+                f"Estimated Weight: {round(weight, 2)} kg\n"
+                f"Box Density: {density*100:.1f}%"
+            )
