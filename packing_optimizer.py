@@ -78,12 +78,10 @@ if st.button("🚀 Run Optimization"):
                         ll_max = max_gaylord_length // int(cut)
                     except:
                         continue  # Skip if any dimension is bad
-                    
+                
                     for lw in range(1, lw_max + 1):
                         for lh in range(1, lh_max + 1):
-                            for ll in range(1, ll_max + 1):
-                                    
-
+                            for ll in range(1, ll_max + 1):         
                         for lh in range(1, max_gaylord_height // base_h + 1):
                             for ll in range(1, max_gaylord_length // cut + 1):
                                 bw = lw * base_w
