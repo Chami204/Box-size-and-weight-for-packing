@@ -4,7 +4,7 @@ from math import ceil
 from io import BytesIO
 
 st.set_page_config(page_title="📦 Profile Packing Optimizer", page_icon="📦")
-st.title("📦 Profile Packing Optimizer")
+st.title("📦 Profile Packing Optimizer - Maximize Fit by Weight")
 
 # ---------- 1. GAYLORD CONSTRAINTS ----------
 st.header("1️⃣ Gaylord Constraints")
@@ -150,7 +150,23 @@ if st.button("🚀 Run Optimization", type="primary"):
 
             st.success("✅ Optimization Complete")
             df = pd.DataFrame(results)
-            st.dataframe(df, use_container_width=True)
+            
+            # ----- Heuristic: minimize number of box sizes -----
+            # Identify max width and height across all results
+            if not df.empty:
+                # Extract numeric W and H
+                dims = df["Box W×H×L (mm)"].str.split("×", expand=True)
+                df["W"] = dims[0].astype(int)
+                df["H"] = dims[1].astype(int)
+                maxW = df["W"].max()
+                maxH = df["H"].max()
+                # Override to single box size
+                df["Optimized Box W×H (mm)"] = f"{maxW}×{maxH}"
+                # Recalculate pallet counts for this unified box
+                df["Boxes per Pallet Optimized"] = (pallet_width // maxW) * (pallet_length // df["Box W×H×L (mm)"].str.split("×").str[2].astype(int)) * (pallet_max_height // maxH)
+                df["Pallet Arrangement Optimized"] = df.apply(lambda r: f"{pallet_width//maxW}×{pallet_length//int(r['Box W×H×L (mm)'].split('×')[2])}×{pallet_max_height//maxH}", axis=1)
+
+            st.dataframe(df.drop(columns=["W","H"]), use_container_width=True)
 
             # download
             out = BytesIO()
