@@ -139,10 +139,9 @@ if st.button("🚀 Run Optimization"):
             df['Opt W'] = df['optW']; df['Opt H'] = df['optH']; df['Opt L'] = whl['L']
             df['Opt Boxes/Pallet'] = (pallet_width // df['Opt W']) * (pallet_length // df['Opt L']) * (pallet_max_height // df['Opt H'])
             df['Opt Pallet Layout'] = df.apply(lambda r: f"{pallet_width//r['Opt W']}×{pallet_length//r['Opt L']}×{pallet_max_height//r['Opt H']}", axis=1)
-            df.drop(columns=['group','optW','optH'], inplace=True)(lambda r: f"{pallet_width//r['Opt W']}×{pallet_length//r['Opt L']}×{pallet_max_height//r['Opt H']}", axis=1)
-lambda r: f"{pallet_width//r['Opt W']}×{pallet_length//r['Opt L']}×{pallet_max_height//r['Opt H']}", axis=1)
+            df.drop(columns=['group','optW','optH'], inplace=True)
 
-            st.success("✅ Optimization Complete")
+            st.success("✅ Optimization Complete")("✅ Optimization Complete")
             st.dataframe(df,use_container_width=True)
 
             # download
