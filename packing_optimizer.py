@@ -74,10 +74,10 @@ if st.button("🚀 Run Optimization", type="primary"):
     if editable_data.empty:
         st.warning("⚠️ Please upload or enter at least one profile to proceed.")
     else:
-        with st.spinner("Optimizing... this may take a moment for large datasets"):  # feedback
+        with st.spinner("Optimizing... this may take a moment for large datasets"):
             results = []
-            pallet_results = []
 
+            # Iterate over each profile entry
             for _, row in editable_data.iterrows():
                 if row["Cut Length"] <= 0 or row["Unit Weight (kg/m)"] <= 0:
                     continue
@@ -87,32 +87,69 @@ if st.button("🚀 Run Optimization", type="primary"):
                 profile_height = row["Profile Height (mm)"]
                 cut_mm = convert_to_mm(row["Cut Length"], row["Cut Unit"])
                 weight_item = unit_weight * (cut_mm/1000)
-                if weight_item == 0: continue
+                if weight_item == 0:
+                    continue
                 max_items = int(max_weight // weight_item)
                 if max_items == 0:
-                    results.append({"Profile Name":profile_name, "Error":"Too heavy"})
-                    continue
+                    # fallback: at least one
+                    max_items = 1
 
-                # faster: use factor pairs for w and h
-                best_box, best_diff, best_dev = None, float('inf'), float('inf')
+                # search for best box that fits constraints
+                best_box = None
+                best_diff = float('inf')
+                best_dev = float('inf')
+                # factor pairs
                 for w_count, h_count in get_factor_pairs(max_items):
-                    for (wc, hc) in [(w_count, h_count), (h_count, w_count)]:
-                        l_count = max_items//(wc*hc)
-                        if wc*hc*l_count != max_items: continue
+                    for wc, hc in ((w_count, h_count),(h_count, w_count)):
+                        l_count = max_items // (wc*hc)
+                        if wc*hc*l_count != max_items:
+                            continue
                         box_w = wc*profile_width; box_h = hc*profile_height; box_l = l_count*cut_mm
-                        if box_w>max_gaylord_width or box_h>max_gaylord_height or box_l>max_gaylord_length: continue
-                        wh_diff = abs(box_w-box_h); deviation=max(box_w,box_h,box_l)-min(box_w,box_h,box_l)
-                        if wh_diff < best_diff or (wh_diff==best_diff and deviation<best_dev):
-                            best_box={'W':ceil(box_w),'H':ceil(box_h),'L':ceil(box_l),'Fit':max_items}
-                            best_diff, best_dev = wh_diff, deviation
-                if not best_box:
-                    results.append({"Profile Name":profile_name, "Error":"No fit"}); continue
+                        wh_diff = abs(box_w-box_h)
+                        deviation = max(box_w,box_h,box_l) - min(box_w,box_h,box_l)
+                        # check constraints
+                        fits = (box_w<=max_gaylord_width and box_h<=max_gaylord_height and box_l<=max_gaylord_length)
+                        if fits:
+                            # choose best among fits
+                            if wh_diff < best_diff or (wh_diff==best_diff and deviation<best_dev):
+                                best_box = {'W':ceil(box_w),'H':ceil(box_h),'L':ceil(box_l),'Fit':max_items,'fits':True}
+                                best_diff, best_dev = wh_diff, deviation
+                # if no fit found, fallback to best ignoring length constraint
+                if best_box is None:
+                    for w_count, h_count in get_factor_pairs(max_items):
+                        for wc, hc in ((w_count, h_count),(h_count, w_count)):
+                            l_count = max_items // (wc*hc)
+                            if wc*hc*l_count != max_items:
+                                continue
+                            box_w = wc*profile_width; box_h = hc*profile_height; box_l = l_count*cut_mm
+                            wh_diff = abs(box_w-box_h)
+                            deviation = max(box_w,box_h,box_l) - min(box_w,box_h,box_l)
+                            if wh_diff < best_diff or (wh_diff==best_diff and deviation<best_dev):
+                                best_box = {'W':ceil(box_w),'H':ceil(box_h),'L':ceil(box_l),'Fit':max_items,'fits':False}
+                                best_diff, best_dev = wh_diff, deviation
+                # always have best_box now
+                # compute density
+                vol = (best_box['W']*best_box['H']*best_box['L'])/1e9
+                max_vol = (max_gaylord_width*max_gaylord_height*max_gaylord_length)/1e9
+                density = vol and (weight_item*best_box['Fit']/ (weight_item*max_items)) or 0
+                density_comment = "" if best_box['fits'] else "⚠️ Box exceeds length limit"
+                density_comment = density_comment or ("⚠️ Low density" if density<0.7 else "🏆 Good density")
 
-                # pallet fit simple calculation
-                w_fit = pallet_width//best_box['W']; l_fit=pallet_length//best_box['L']
-                h_fit = pallet_max_height//best_box['H']
-                pallet_count = w_fit*l_fit*h_fit
-                results.append({"Profile":profile_name, "W":best_box['W'],"H":best_box['H'],"L":best_box['L'],"FitItems":best_box['Fit'],"PalletBoxes":pallet_count})
+                # pallet calculation
+                w_fit = pallet_width//best_box['W'] if best_box['W']>0 else 0
+                l_fit = pallet_length//best_box['L'] if best_box['L']>0 else 0
+                h_fit = pallet_max_height//best_box['H'] if best_box['H']>0 else 0
+                pallet_count = w_fit * l_fit * h_fit
+
+                results.append({
+                    "Profile Name": profile_name,
+                    "Cut Length (mm)": round(cut_mm,2),
+                    "Items per Box": best_box['Fit'],
+                    "Box W×H×L (mm)": f"{best_box['W']}×{best_box['H']}×{best_box['L']}",
+                    "Density Comment": density_comment,
+                    "Boxes per Pallet": pallet_count,
+                    "Pallet Arrangement": f"{w_fit}×{l_fit}×{h_fit}" if pallet_count>0 else "❌"
+                })
 
             st.success("✅ Optimization Complete")
             df = pd.DataFrame(results)
@@ -121,5 +158,5 @@ if st.button("🚀 Run Optimization", type="primary"):
             # download
             out = BytesIO()
             with pd.ExcelWriter(out, engine='openpyxl') as writer:
-                df.to_excel(writer,index=False)
+                df.to_excel(writer,index=False,sheet_name='Results')
             st.download_button("📥 Download Results", out.getvalue(),"results.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
