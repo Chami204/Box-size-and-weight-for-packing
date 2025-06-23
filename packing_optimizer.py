@@ -163,19 +163,17 @@ if st.button("🚀 Run Optimization"):
                     total = layer_cap * max_len_count
                     vol_box = (w_common * h_common * (max_len_count*cut)) /1e9
                     used_vol = uw * cut/1000 * total /1e3
-                    ...
-                    density = used_vol / vol_box if vol_box > 0 else 0
-                    if best is None or density > best.get('Density', 0):
-                        best = {
-                            'Profile': name,
+                    density = used_vol/vol_box if vol_box>0 else 0
+                    if best_opt is None or density > best_opt.get('density', 0):
+                        best_opt = {
+                            'Profile': row['Profile Name'],
                             'Cut mm': cut,
-                            'Box Width/mm': ceil(bw),
-                            'Box Height/mm': ceil(bh),
-                            'Box Length/mm': ceil(bl),
-                            'Number of profiles/box': c,
-                            'Box Density Comment': "🏆 Good density" if density >= 0.7 else "⚠️ Low density",
-                            'Density': density
-
+                            'Box Width/mm': w_common,
+                            'Box Height/mm': h_common,
+                            'Box Length/mm': ceil(max_len_count*cut),
+                            'Number of profiles/box': total,
+                            'Box Density Comment': '🏆 Good density' if density>=0.7 else '⚠️ Low density',
+                            'density': density
                         }
                 if best_opt:
                     # pallet
