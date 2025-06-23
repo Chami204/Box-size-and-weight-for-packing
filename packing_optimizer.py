@@ -96,7 +96,7 @@ if st.button("🚀 Run Optimization"):
                             vol_box = (bw * bh * bl) / 1e9
                             used_vol = (w * h * cut * c) / 1e9
                             density = used_vol / vol_box if vol_box > 0 else 0
-                            if best is None or density > best['density']:
+                            if best is None or density > best.get('Density', 0):
                                 best = {
                                     'Profile': name,
                                     'Cut mm': cut,
