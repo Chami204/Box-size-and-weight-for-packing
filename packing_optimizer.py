@@ -146,49 +146,73 @@ if st.button("🚀 Run Optimization"):
             for _, row in editable_data.iterrows():
                 cut = convert_to_mm(row['Cut Length'], row['Cut Unit'])
                 uw = row['Unit Weight (kg/m)']
-                weight_item = uw * (cut/1000)
+                weight_item = uw * (cut / 1000)
                 best_opt = None
                 for w_common, h_common in common_dims:
-                    # max profiles by width/height counts
-                    w_count = w_common and (max_gaylord_width // w_common) * 1 or 0
-                    h_count = h_common and (max_gaylord_height // h_common) * 1 or 0
-                    # profiles per layer = w_count * h_count
+                    w_count = max_gaylord_width // w_common
+                    h_count = max_gaylord_height // h_common
                     layer_cap = w_count * h_count
                     if layer_cap == 0:
                         continue
-                    # length count available by weight and length
-                    max_len_count = min(int(max_gaylord_length // cut), int(max_weight // weight_item) // layer_cap)
+                    max_len_count = min(max_gaylord_length // cut, max_weight // (weight_item * layer_cap))
                     if max_len_count <= 0:
                         continue
                     total = layer_cap * max_len_count
-                    vol_box = (w_common * h_common * (max_len_count*cut)) /1e9
-                    used_vol = uw * cut/1000 * total /1e3
-                    density = used_vol/vol_box if vol_box>0 else 0
+                    vol_box = (w_common * h_common * (max_len_count * cut)) / 1e9
+                    used_vol = (w_common * h_common * cut * max_len_count) / 1e9
+                    density = used_vol / vol_box if vol_box > 0 else 0
+                    if density < 0.7:
+                        continue
                     if best_opt is None or density > best_opt.get('density', 0):
                         best_opt = {
                             'Profile': row['Profile Name'],
                             'Cut mm': cut,
                             'Box Width/mm': w_common,
                             'Box Height/mm': h_common,
-                            'Box Length/mm': ceil(max_len_count*cut),
+                            'Box Length/mm': ceil(max_len_count * cut),
                             'Number of profiles/box': total,
-                            'Box Density Comment': '🏆 Good density' if density>=0.7 else '⚠️ Low density',
-                            'density': density
+                            'Density': density,
+                            'Box Density Comment': '🏆 Good density'
                         }
                 if best_opt:
-                    # pallet
                     wf = pallet_width // best_opt['Box Width/mm']
                     lf = pallet_length // best_opt['Box Length/mm']
                     hf = pallet_max_height // best_opt['Box Height/mm']
                     best_opt.update({
-                        'Pallet W':pallet_width,'Pallet H':pallet_max_height,'Pallet L':pallet_length,
-                        'Number of Boxes/pallet': wf*lf*hf,
-                        'Pallet Density Comment': '✅ Fits pallet' if wf*lf*hf>0 else '❌ No fit'
+                        'Pallet W': pallet_width,
+                        'Pallet H': pallet_max_height,
+                        'Pallet L': pallet_length,
+                        'Number of Boxes/pallet': wf * lf * hf,
+                        'Pallet Density Comment': '✅ Efficient pallet usage' if wf * lf * hf > 0 else '❌ No fit'
                     })
                     optimized.append(best_opt)
-            df_opt = pd.DataFrame(optimized)
+            # If no optimized single box layouts >=70% density, fall back to original multiple sizes
+            if optimized:
+                df_opt = pd.DataFrame(optimized)
+            else:
+                df_opt = df.copy()
             st.success("✅ Optimization Complete")
-            st.dataframe(df_opt, use_container_width=True)
+            # Reorder and rename output columns
+            df_out = df_opt.rename(columns={
+                'Profile': 'Profile',
+                'Cut mm': 'Cut length/mm',
+                'Box Width/mm': 'Box Width/mm',
+                'Box Height/mm': 'Box Height/mm',
+                'Box Length/mm': 'Box Length/mm',
+                'Number of profiles/box': 'Number of profiles/box',
+                'Box Density Comment': 'Box density comment',
+                'Pallet W': 'Pallet W (mm)',
+                'Pallet H': 'Pallet H (mm)',
+                'Pallet L': 'Pallet L (mm)',
+                'Number of Boxes/pallet': 'Number of Boxes/pallet',
+                'Pallet Density Comment': 'pallet density comment'
+            })[[
+                'Profile', 'Cut length/mm', 'Box Width/mm', 'Box Height/mm', 'Box Length/mm',
+                'Number of profiles/box', 'Box density comment',
+                'Pallet W (mm)', 'Pallet H (mm)', 'Pallet L (mm)',
+                'Number of Boxes/pallet', 'pallet density comment'
+            ]]
+            st.dataframe(df_out, use_container_width=True)
 
             # download
             out = BytesIO()
