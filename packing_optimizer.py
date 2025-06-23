@@ -109,7 +109,7 @@ if st.button("🚀 Run Optimization"):
                     'Used Pallet Size':used_pallet_size
                 })
             df=pd.DataFrame(results)
-            # ----- Heuristic: dynamically limit box size variants -----
+            # ----- Heuristic: cluster width-height combos into box size variants -----
             # Extract numeric dims
             whl = df['Box W×H×L mm'].str.split('×', expand=True).astype(int)
             whl.columns = ['W','H','L']
@@ -124,22 +124,43 @@ if st.button("🚀 Run Optimization"):
                 max_groups = 3
             else:
                 max_groups = min(5, m)
-            # Assign each row to a group by quantile of L
-            df['group'] = pd.qcut(whl['L'], q=max_groups, labels=False, duplicates='drop')
-            # For each group, compute max W,H
-            opt_wh = df.groupby('group').apply(lambda g: pd.Series({
-                'optW': whl.loc[g.index,'W'].max(),
-                'optH': whl.loc[g.index,'H'].max()
-            })).reset_index()
-            # Map optimized dims back
-            df = df.merge(opt_wh, on='group')
+            
+            # Attempt KMeans clustering on W,H
+            try:
+                from sklearn.cluster import KMeans
+                coords = whl[['W','H']]
+                kmeans = KMeans(n_clusters=max_groups, random_state=42).fit(coords)
+                labels = kmeans.labels_
+                centers = kmeans.cluster_centers_
+                # Round up centers
+                opt_centers = [(int(ceil(x)), int(ceil(y))) for x,y in centers]
+                df['cluster'] = labels
+                # Map center dims back
+                df['optW'] = df['cluster'].apply(lambda i: opt_centers[i][0])
+                df['optH'] = df['cluster'].apply(lambda i: opt_centers[i][1])
+            except ImportError:
+                # Fallback to quantile grouping
+                df['cluster'] = pd.qcut(whl['L'], q=max_groups, labels=False, duplicates='drop')
+                opt_wh = df.groupby('cluster').apply(lambda g: pd.Series({
+                    'optW': whl.loc[g.index,'W'].max(),
+                    'optH': whl.loc[g.index,'H'].max()
+                })).reset_index()
+                df = df.merge(opt_wh, on='cluster')
+            
             # Build optimized box dims keeping L
-            df['Opt Box W×H×L mm'] = df.apply(lambda r: f"{r['optW']}×{r['optH']}×{whl.at[r.name,'L']}", axis=1)
+            df['Opt Box W×H×L mm'] = df.apply(
+                lambda r: f"{r['optW']}×{r['optH']}×{whl.at[r.name,'L']}", axis=1)
             # Recalculate pallet fit for optimized boxes
             df['Opt W'] = df['optW']; df['Opt H'] = df['optH']; df['Opt L'] = whl['L']
-            df['Opt Boxes/Pallet'] = (pallet_width // df['Opt W']) * (pallet_length // df['Opt L']) * (pallet_max_height // df['Opt H'])
-            df['Opt Pallet Layout'] = df.apply(lambda r: f"{pallet_width//r['Opt W']}×{pallet_length//r['Opt L']}×{pallet_max_height//r['Opt H']}", axis=1)
-            df.drop(columns=['group','optW','optH'], inplace=True)
+            df['Opt Boxes/Pallet'] = (
+                pallet_width // df['Opt W']
+                * pallet_length // df['Opt L']
+                * pallet_max_height // df['Opt H']
+            )
+            df['Opt Pallet Layout'] = df.apply(
+                lambda r: f"{pallet_width//r['Opt W']}×{pallet_length//r['Opt L']}×{pallet_max_height//r['Opt H']}", axis=1
+            )
+            df.drop(columns=['cluster','optW','optH'], inplace=True)
 
             st.success("✅ Optimization Complete")
             st.dataframe(df,use_container_width=True)
