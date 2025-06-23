@@ -90,52 +90,49 @@ if st.button("🚀 Run Optimization", type="primary"):
                 if weight_item == 0:
                     continue
                 max_items = int(max_weight // weight_item)
-                if max_items == 0:
-                    # fallback: at least one
+                if max_items <= 0:
                     max_items = 1
 
-                # search for best box that fits constraints
+                # Search for best fit respecting all dimension constraints
                 best_box = None
                 best_diff = float('inf')
                 best_dev = float('inf')
-                # factor pairs
-                for w_count, h_count in get_factor_pairs(max_items):
-                    for wc, hc in ((w_count, h_count),(h_count, w_count)):
-                        l_count = max_items // (wc*hc)
-                        if wc*hc*l_count != max_items:
-                            continue
-                        box_w = wc*profile_width; box_h = hc*profile_height; box_l = l_count*cut_mm
-                        wh_diff = abs(box_w-box_h)
-                        deviation = max(box_w,box_h,box_l) - min(box_w,box_h,box_l)
-                        # check constraints
-                        fits = (box_w<=max_gaylord_width and box_h<=max_gaylord_height and box_l<=max_gaylord_length)
-                        if fits:
-                            # choose best among fits
-                            if wh_diff < best_diff or (wh_diff==best_diff and deviation<best_dev):
-                                best_box = {'W':ceil(box_w),'H':ceil(box_h),'L':ceil(box_l),'Fit':max_items,'fits':True}
-                                best_diff, best_dev = wh_diff, deviation
-                # if no fit found, fallback to best ignoring length constraint
-                if best_box is None:
-                    for w_count, h_count in get_factor_pairs(max_items):
+                best_count = 0
+                # Try item counts from max_items down to 1
+                for count in range(max_items, 0, -1):
+                    # factor pairs for width & height
+                    for w_count, h_count in get_factor_pairs(count):
                         for wc, hc in ((w_count, h_count),(h_count, w_count)):
-                            l_count = max_items // (wc*hc)
-                            if wc*hc*l_count != max_items:
+                            l_count = count // (wc*hc) if wc*hc>0 else 0
+                            if wc*hc*l_count != count:
                                 continue
                             box_w = wc*profile_width; box_h = hc*profile_height; box_l = l_count*cut_mm
+                            # enforce constraints
+                            if box_w>max_gaylord_width or box_h>max_gaylord_height or box_l>max_gaylord_length:
+                                continue
                             wh_diff = abs(box_w-box_h)
-                            deviation = max(box_w,box_h,box_l) - min(box_w,box_h,box_l)
+                            deviation = max(box_w,box_h,box_l)-min(box_w,box_h,box_l)
+                            # choose best among same count
                             if wh_diff < best_diff or (wh_diff==best_diff and deviation<best_dev):
-                                best_box = {'W':ceil(box_w),'H':ceil(box_h),'L':ceil(box_l),'Fit':max_items,'fits':False}
+                                best_box = {'W':ceil(box_w),'H':ceil(box_h),'L':ceil(box_l),'Fit':count}
                                 best_diff, best_dev = wh_diff, deviation
-                # always have best_box now
-                # compute density
-                vol = (best_box['W']*best_box['H']*best_box['L'])/1e9
-                max_vol = (max_gaylord_width*max_gaylord_height*max_gaylord_length)/1e9
-                density = vol and (weight_item*best_box['Fit']/ (weight_item*max_items)) or 0
-                density_comment = "" if best_box['fits'] else "⚠️ Box exceeds length limit"
-                density_comment = density_comment or ("⚠️ Low density" if density<0.7 else "🏆 Good density")
+                                best_count = count
+                    # if found box for this count, stop searching lower counts
+                    if best_box is not None:
+                        break
 
-                # pallet calculation
+                # Ensure we have a box
+                if best_box is None:
+                    st.warning(f"⚠️ Could not fit '{profile_name}' into any box under constraints.")
+                    continue
+
+                # compute density comment
+                vol_box = (best_box['W']*best_box['H']*best_box['L'])/1e9
+                used_vol = best_count * (profile_width*profile_height*cut_mm)/1e9
+                density = used_vol/vol_box if vol_box>0 else 0
+                density_comment = "🏆 Good density" if density>=0.7 else "⚠️ Low density"
+
+                # pallet calculation under constraints
                 w_fit = pallet_width//best_box['W'] if best_box['W']>0 else 0
                 l_fit = pallet_length//best_box['L'] if best_box['L']>0 else 0
                 h_fit = pallet_max_height//best_box['H'] if best_box['H']>0 else 0
