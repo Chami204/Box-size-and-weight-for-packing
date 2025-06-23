@@ -96,7 +96,7 @@ if st.button("🚀 Run Optimization"):
                             vol_box = (bw * bh * bl) / 1e9
                             used_vol = (w * h * cut * c) / 1e9
                             density = used_vol / vol_box if vol_box > 0 else 0
-                            if best is None or density > best.get('Density', 0):
+                            if best is None or density > best['density']:
                                 best = {
                                     'Profile': name,
                                     'Cut mm': cut,
@@ -126,20 +126,69 @@ if st.button("🚀 Run Optimization"):
 
             df = pd.DataFrame(results)
 
-            # KMeans clustering to reduce box variants
+            # ----- Determine optimal common W,H to reduce box types -----
+            # Collect candidate dims from per-profile best
+            wh = df[['Box Width/mm','Box Height/mm']].drop_duplicates().values
+            # If many candidates, cluster them to max 3 groups
             try:
                 from sklearn.cluster import KMeans
-                coords = df[['Box Width/mm', 'Box Height/mm']]
-                max_clusters = 3 if len(df) <= 10 else 5
-                kmeans = KMeans(n_clusters=min(max_clusters, len(df)), random_state=42).fit(coords)
+                n_clusters = min(3, len(wh))
+                kmeans = KMeans(n_clusters=n_clusters, random_state=42).fit(wh)
                 centers = kmeans.cluster_centers_
-                df['Box Width/mm'] = [int(ceil(centers[i][0])) for i in kmeans.labels_]
-                df['Box Height/mm'] = [int(ceil(centers[i][1])) for i in kmeans.labels_]
-            except:
-                pass
+                # Round up to mm
+                common_dims = [(int(ceil(x)), int(ceil(y))) for x,y in centers]
+            except ImportError:
+                # fallback: choose the 3 most common dims
+                common_dims = df.groupby(['Box Width/mm','Box Height/mm']).size().nlargest(3).index.tolist()
 
+            # Re-evaluate each profile with each common dim, choose the one with highest density
+            optimized = []
+            for _, row in editable_data.iterrows():
+                cut = convert_to_mm(row['Cut Length'], row['Cut Unit'])
+                uw = row['Unit Weight (kg/m)']
+                weight_item = uw * (cut/1000)
+                best_opt = None
+                for w_common, h_common in common_dims:
+                    # max profiles by width/height counts
+                    w_count = w_common and (max_gaylord_width // w_common) * 1 or 0
+                    h_count = h_common and (max_gaylord_height // h_common) * 1 or 0
+                    # profiles per layer = w_count * h_count
+                    layer_cap = w_count * h_count
+                    if layer_cap == 0:
+                        continue
+                    # length count available by weight and length
+                    max_len_count = min(int(max_gaylord_length // cut), int(max_weight // weight_item) // layer_cap)
+                    if max_len_count <= 0:
+                        continue
+                    total = layer_cap * max_len_count
+                    vol_box = (w_common * h_common * (max_len_count*cut)) /1e9
+                    used_vol = uw * cut/1000 * total /1e3
+                    density = used_vol/vol_box if vol_box>0 else 0
+                    if best_opt is None or density>best_opt['density']:
+                        best_opt = {
+                            'Profile': row['Profile Name'],
+                            'Cut mm': cut,
+                            'Box Width/mm': w_common,
+                            'Box Height/mm': h_common,
+                            'Box Length/mm': ceil(max_len_count*cut),
+                            'Number of profiles/box': total,
+                            'Box Density Comment': '🏆 Good density' if density>=0.7 else '⚠️ Low density',
+                            'density': density
+                        }
+                if best_opt:
+                    # pallet
+                    wf = pallet_width // best_opt['Box Width/mm']
+                    lf = pallet_length // best_opt['Box Length/mm']
+                    hf = pallet_max_height // best_opt['Box Height/mm']
+                    best_opt.update({
+                        'Pallet W':pallet_width,'Pallet H':pallet_max_height,'Pallet L':pallet_length,
+                        'Number of Boxes/pallet': wf*lf*hf,
+                        'Pallet Density Comment': '✅ Fits pallet' if wf*lf*hf>0 else '❌ No fit'
+                    })
+                    optimized.append(best_opt)
+            df_opt = pd.DataFrame(optimized)
             st.success("✅ Optimization Complete")
-            st.dataframe(df, use_container_width=True)
+            st.dataframe(df_opt, use_container_width=True)
 
             # download
             out = BytesIO()
