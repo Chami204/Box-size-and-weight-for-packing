@@ -3,7 +3,11 @@ import pandas as pd
 from math import ceil
 from itertools import permutations
 from io import BytesIO
-import matplotlib.pyplot as plt
+try:
+    import matplotlib.pyplot as plt
+except ImportError:
+    plt = None
+    st.warning("matplotlib is not installed. Pallet visualization is disabled.")
 
 st.set_page_config(page_title="📦 Profile Packing Optimizer", page_icon="📦")
 st.title("📦 Profile Packing Optimizer - Maximize Fit by Weight & Pallet Layout")
@@ -105,6 +109,20 @@ if st.button("🚀 Run Optimization"):
                     'Used Pallet Size':used_pallet_size
                 })
             df=pd.DataFrame(results)
+            # ----- Heuristic: unify box width & height for cost savings -----
+            # Extract numeric dims
+            whl = df['Box W×H×L mm'].str.split('×', expand=True).astype(int)
+            whl.columns = ['W','H','L']
+            # Find most common width and height
+            common_w = whl['W'].mode()[0]
+            common_h = whl['H'].mode()[0]
+            # Create optimized box dims keeping lengths
+            df['Opt Box W×H×L mm'] = whl.apply(lambda r: f"{common_w}×{common_h}×{r['L']}", axis=1)
+            # Recalculate pallet fit for optimized boxes
+            df[['Opt W','Opt H','Opt L']] = df['Opt Box W×H×L mm'].str.split('×', expand=True).astype(int)
+            df['Opt Boxes/Pallet'] = (pallet_width // df['Opt W']) * (pallet_length // df['Opt L']) * (pallet_max_height // df['Opt H'])
+            df['Opt Pallet Layout'] = df.apply(lambda r: f"{pallet_width//r['Opt W']}×{pallet_length//r['Opt L']}×{pallet_max_height//r['Opt H']}", axis=1)
+
             st.success("✅ Optimization Complete")
             st.dataframe(df,use_container_width=True)
 
