@@ -1,14 +1,15 @@
 import streamlit as st
 import pandas as pd
 from math import ceil
+from itertools import permutations
 from io import BytesIO
+import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="📦 Profile Packing Optimizer", page_icon="📦")
-st.title("📦 Profile Packing Optimizer - Maximize Fit by Weight")
+st.title("📦 Profile Packing Optimizer - Maximize Fit by Weight & Pallet Layout")
 
 # ---------- 1. GAYLORD CONSTRAINTS ----------
 st.header("1️⃣ Gaylord Constraints")
-
 col1, col2, col3 = st.columns(3)
 with col1:
     max_weight = st.number_input("Maximum Gaylord Weight (kg)", min_value=0.1, value=1000.0, format="%.2f")
@@ -27,149 +28,107 @@ with col2:
     pallet_length = st.number_input("Pallet Length (mm)", min_value=1, value=1100)
 with col3:
     pallet_max_height = st.number_input("Pallet Max Height (mm)", min_value=1, value=2000)
+used_pallet_size = f"{pallet_width}×{pallet_length}×{pallet_max_height} mm"
 
 # ---------- 3. PROFILE + CUT LENGTH INPUT ----------
 st.header("3️⃣ Profile + Cut Lengths Input Table")
-uploaded_file = st.file_uploader("Upload Profile Data (.csv or .xlsx)", type=["csv", "xlsx"])
+uploaded_file = st.file_uploader("Upload Profile Data (.csv or .xlsx)", type=["csv","xlsx"])
 if uploaded_file:
-    if uploaded_file.name.endswith(".csv"):
+    if uploaded_file.name.endswith('.csv'):
         editable_data = pd.read_csv(uploaded_file)
     else:
         editable_data = pd.read_excel(uploaded_file)
 else:
     default_data = pd.DataFrame({
-        "Profile Name": ["Profile A", "Profile B"],
-        "Unit Weight (kg/m)": [1.5, 2.0],
-        "Profile Width (mm)": [50.0, 60.0],
-        "Profile Height (mm)": [60.0, 70.0],
-        "Cut Length": [2500, 3000],
-        "Cut Unit": ["mm", "mm"],
+        "Profile Name":["Profile A","Profile B"],
+        "Unit Weight (kg/m)":[1.5,2.0],
+        "Profile Width (mm)":[50.0,60.0],
+        "Profile Height (mm)":[60.0,70.0],
+        "Cut Length":[2500,3000],
+        "Cut Unit":["mm","mm"],
     })
-    editable_data = st.data_editor(
-        default_data,
-        num_rows="dynamic",
-        use_container_width=True,
-        column_config={
-            "Cut Unit": st.column_config.SelectboxColumn(
-                label="Cut Unit",
-                options=["mm", "cm", "m", "inches"]
-            )
-        }
-    )
+    editable_data = st.data_editor(default_data, num_rows='dynamic', use_container_width=True,
+        column_config={"Cut Unit":st.column_config.SelectboxColumn(label="Cut Unit",options=["mm","cm","m","inches"])})
 
 # Helpers
-
-def convert_to_mm(length, unit):
-    return {"mm": length, "cm": length*10, "m": length*1000, "inches": length*25.4}.get(unit, length)
+def convert_to_mm(length, unit): return {'mm':length,'cm':length*10,'m':length*1000,'inches':length*25.4}.get(unit,length)
 
 def get_factor_pairs(n):
-    pairs = []
-    for i in range(1, int(n**0.5)+1):
-        if n % i == 0:
-            pairs.append((i, n//i))
+    pairs=[]
+    for i in range(1,int(n**0.5)+1):
+        if n % i ==0: pairs.append((i,n//i))
     return pairs
 
-# ---------- 4. RUN BUTTON ----------
-if st.button("🚀 Run Optimization", type="primary"):
+# ---------- 4. RUN & OPTIMIZATION ----------
+if st.button("🚀 Run Optimization"):
     if editable_data.empty:
-        st.warning("⚠️ Please upload or enter at least one profile to proceed.")
+        st.warning("⚠️ Please upload or enter profiles to proceed.")
     else:
-        with st.spinner("Optimizing... this may take a moment for large datasets"):
-            results = []
-
-            # Iterate over each profile entry
-            for _, row in editable_data.iterrows():
-                if row["Cut Length"] <= 0 or row["Unit Weight (kg/m)"] <= 0:
+        with st.spinner("Optimizing box & pallet...\nThis may take a moment."):
+            results=[]
+            for _,row in editable_data.iterrows():
+                if row['Cut Length']<=0 or row['Unit Weight (kg/m)']<=0: continue
+                name=row['Profile Name']; uw=row['Unit Weight (kg/m)']
+                w=row['Profile Width (mm)']; h=row['Profile Height (mm)']
+                cut=convert_to_mm(row['Cut Length'],row['Cut Unit'])
+                weight_item=uw*(cut/1000)
+                count=int(max_weight//weight_item) or 1
+                best=None; bd=float('inf'); dd=float('inf'); bc=0
+                for c in range(count,0,-1):
+                    for fw,fh in get_factor_pairs(c):
+                        for wc,hc in ((fw,fh),(fh,fw)):
+                            lc=c//(wc*hc) if wc*hc>0 else 0
+                            if wc*hc*lc!=c: continue
+                            bw=wc*w; bh=hc*h; bl=lc*cut
+                            if bw>max_gaylord_width or bh>max_gaylord_height or bl>max_gaylord_length: continue
+                            diff=abs(bw-bh); dev=max(bw,bh,bl)-min(bw,bh,bl)
+                            if diff<bd or (diff==bd and dev<dd): best={'W':ceil(bw),'H':ceil(bh),'L':ceil(bl),'Fit':c}; bd,dd=diff,dev; bc=c
+                    if best: break
+                if not best:
+                    st.warning(f"⚠️ '{name}' cannot fit any box under constraints.")
                     continue
-                profile_name = row["Profile Name"]
-                unit_weight = row["Unit Weight (kg/m)"]
-                profile_width = row["Profile Width (mm)"]
-                profile_height = row["Profile Height (mm)"]
-                cut_mm = convert_to_mm(row["Cut Length"], row["Cut Unit"])
-                weight_item = unit_weight * (cut_mm/1000)
-                if weight_item == 0:
-                    continue
-                max_items = int(max_weight // weight_item)
-                if max_items <= 0:
-                    max_items = 1
-
-                # Search for best fit respecting all dimension constraints
-                best_box = None
-                best_diff = float('inf')
-                best_dev = float('inf')
-                best_count = 0
-                # Try item counts from max_items down to 1
-                for count in range(max_items, 0, -1):
-                    # factor pairs for width & height
-                    for w_count, h_count in get_factor_pairs(count):
-                        for wc, hc in ((w_count, h_count),(h_count, w_count)):
-                            l_count = count // (wc*hc) if wc*hc>0 else 0
-                            if wc*hc*l_count != count:
-                                continue
-                            box_w = wc*profile_width; box_h = hc*profile_height; box_l = l_count*cut_mm
-                            # enforce constraints
-                            if box_w>max_gaylord_width or box_h>max_gaylord_height or box_l>max_gaylord_length:
-                                continue
-                            wh_diff = abs(box_w-box_h)
-                            deviation = max(box_w,box_h,box_l)-min(box_w,box_h,box_l)
-                            # choose best among same count
-                            if wh_diff < best_diff or (wh_diff==best_diff and deviation<best_dev):
-                                best_box = {'W':ceil(box_w),'H':ceil(box_h),'L':ceil(box_l),'Fit':count}
-                                best_diff, best_dev = wh_diff, deviation
-                                best_count = count
-                    # if found box for this count, stop searching lower counts
-                    if best_box is not None:
-                        break
-
-                # Ensure we have a box
-                if best_box is None:
-                    st.warning(f"⚠️ Could not fit '{profile_name}' into any box under constraints.")
-                    continue
-
-                # compute density comment
-                vol_box = (best_box['W']*best_box['H']*best_box['L'])/1e9
-                used_vol = best_count * (profile_width*profile_height*cut_mm)/1e9
-                density = used_vol/vol_box if vol_box>0 else 0
-                density_comment = "🏆 Good density" if density>=0.7 else "⚠️ Low density"
-
-                # pallet calculation under constraints
-                w_fit = pallet_width//best_box['W'] if best_box['W']>0 else 0
-                l_fit = pallet_length//best_box['L'] if best_box['L']>0 else 0
-                h_fit = pallet_max_height//best_box['H'] if best_box['H']>0 else 0
-                pallet_count = w_fit * l_fit * h_fit
-
+                vol_box=(best['W']*best['H']*best['L'])/1e9
+                used_vol=bc*(w*h*cut)/1e9
+                density=used_vol/vol_box if vol_box>0 else 0
+                dcom="🏆 Good density" if density>=0.7 else "⚠️ Low density"
+                wf=pallet_width//best['W']; lf=pallet_length//best['L']; hf=pallet_max_height//best['H']
+                pal_count=wf*lf*hf
                 results.append({
-                    "Profile Name": profile_name,
-                    "Cut Length (mm)": round(cut_mm,2),
-                    "Items per Box": best_box['Fit'],
-                    "Box W×H×L (mm)": f"{best_box['W']}×{best_box['H']}×{best_box['L']}",
-                    "Density Comment": density_comment,
-                    "Boxes per Pallet": pallet_count,
-                    "Pallet Arrangement": f"{w_fit}×{l_fit}×{h_fit}" if pallet_count>0 else "❌"
+                    'Profile':name,
+                    'Cut mm':cut,
+                    'Items/Box':best['Fit'],
+                    'Box W×H×L mm':f"{best['W']}×{best['H']}×{best['L']}",
+                    'Density':f"{density*100:.1f}%",
+                    'Density Comment':dcom,
+                    'Boxes/Pallet':pal_count,
+                    'Pallet Layout':f"{wf}×{lf}×{hf}",
+                    'Used Pallet Size':used_pallet_size
                 })
-
+            df=pd.DataFrame(results)
             st.success("✅ Optimization Complete")
-            df = pd.DataFrame(results)
-            
-            # ----- Heuristic: minimize number of box sizes -----
-            # Identify max width and height across all results
-            if not df.empty:
-                # Extract numeric W and H
-                dims = df["Box W×H×L (mm)"].str.split("×", expand=True)
-                df["W"] = dims[0].astype(int)
-                df["H"] = dims[1].astype(int)
-                maxW = df["W"].max()
-                maxH = df["H"].max()
-                # Override to single box size
-                df["Optimized Box W×H (mm)"] = f"{maxW}×{maxH}"
-                # Recalculate pallet counts for this unified box
-                df["Boxes per Pallet Optimized"] = (pallet_width // maxW) * (pallet_length // df["Box W×H×L (mm)"].str.split("×").str[2].astype(int)) * (pallet_max_height // maxH)
-                df["Pallet Arrangement Optimized"] = df.apply(lambda r: f"{pallet_width//maxW}×{pallet_length//int(r['Box W×H×L (mm)'].split('×')[2])}×{pallet_max_height//maxH}", axis=1)
-
-            st.dataframe(df.drop(columns=["W","H"]), use_container_width=True)
+            st.dataframe(df,use_container_width=True)
 
             # download
-            out = BytesIO()
-            with pd.ExcelWriter(out, engine='openpyxl') as writer:
-                df.to_excel(writer,index=False,sheet_name='Results')
-            st.download_button("📥 Download Results", out.getvalue(),"results.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            out=BytesIO()
+            with pd.ExcelWriter(out,engine='openpyxl') as w: df.to_excel(w,index=False,sheet_name='Results')
+            st.download_button("📥 Download Results",out.getvalue(),"results.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+        # ---------- 5. PALLET VISUALIZATION ----------
+        st.header("📊 Pallet Layout Visualization")
+        idx=st.selectbox("Select profile to visualize:",options=df.index,format_func=lambda i:df.at[i,'Profile'])
+        if st.button("🔍 Show Layout"):
+            row=df.loc[idx]
+            wf,lf,hf = map(int,row['Pallet Layout'].split('×'))
+            bw,bh=row['Box W×H×L mm'].split('×')[:2]
+            bw,bh=int(bw),int(bh)
+            fig,ax=plt.subplots()
+            # draw pallet border
+            ax.add_patch(plt.Rectangle((0,0),(pallet_width),(pallet_length),fill=False,edgecolor='black',linewidth=2))
+            # draw boxes on base layer
+            for i in range(wf):
+                for j in range(lf):
+                    ax.add_patch(plt.Rectangle((i*bw,j*bh),bw,bh,fill=True,facecolor='skyblue',edgecolor='white'))
+            ax.set_xlim(0,pallet_width); ax.set_ylim(0,pallet_length)
+            ax.set_aspect('equal', 'box')
+            ax.set_xlabel('Width mm'); ax.set_ylabel('Length mm')
+            st.pyplot(fig)
