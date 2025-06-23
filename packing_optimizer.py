@@ -69,19 +69,19 @@ if st.button("🚀 Run Optimization"):
 
                 # Try both orientations (w,h) and (h,w) for box cross-section
                 best = None
-                    for base_w, base_h in [(w, h), (h, w)]:
-                        if base_w <= 0 or base_h <= 0:
-                            continue  # Skip invalid sizes
-                        try:
-                            lw_max = max_gaylord_width // int(base_w)
-                            lh_max = max_gaylord_height // int(base_h)
-                            ll_max = max_gaylord_length // int(cut)
-                        except:
-                            continue  # Skip if any dimension is bad
+                for base_w, base_h in [(w, h), (h, w)]:
+                    if base_w <= 0 or base_h <= 0:
+                        continue  # Skip invalid sizes
+                    try:
+                        lw_max = max_gaylord_width // int(base_w)
+                        lh_max = max_gaylord_height // int(base_h)
+                        ll_max = max_gaylord_length // int(cut)
+                    except:
+                        continue  # Skip if any dimension is bad
                     
-                        for lw in range(1, lw_max + 1):
-                            for lh in range(1, lh_max + 1):
-                                for ll in range(1, ll_max + 1):
+                    for lw in range(1, lw_max + 1):
+                        for lh in range(1, lh_max + 1):
+                            for ll in range(1, ll_max + 1):
                                     
 
                         for lh in range(1, max_gaylord_height // base_h + 1):
