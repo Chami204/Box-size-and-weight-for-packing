@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from math import ceil, floor
+from math import ceil
 from io import BytesIO
 
 st.set_page_config(page_title="📦 Profile Packing Optimizer", page_icon="📦")
@@ -48,7 +48,7 @@ else:
     editable_data = st.data_editor(default_data, num_rows='dynamic', use_container_width=True,
         column_config={"Cut Unit": st.column_config.SelectboxColumn(label="Cut Unit", options=["mm", "cm", "m", "inches"])} )
 
-# Helpers
+# ---------- Helpers ----------
 def convert_to_mm(length, unit):
     return {'mm': length, 'cm': length * 10, 'm': length * 1000, 'inches': length * 25.4}.get(unit, length)
 
@@ -67,23 +67,20 @@ if st.button("🚀 Run Optimization"):
                 cut = convert_to_mm(row['Cut Length'], row['Cut Unit'])
                 profile_weight = uw * cut / 1000
 
-                # Try both orientations (w,h) and (h,w) for box cross-section
                 best = None
                 for base_w, base_h in [(w, h), (h, w)]:
                     if base_w <= 0 or base_h <= 0:
-                        continue  # Skip invalid sizes
+                        continue
                     try:
                         lw_max = max_gaylord_width // int(base_w)
                         lh_max = max_gaylord_height // int(base_h)
                         ll_max = max_gaylord_length // int(cut)
                     except:
-                        continue  # Skip if any dimension is bad
-                
+                        continue
+
                     for lw in range(1, lw_max + 1):
                         for lh in range(1, lh_max + 1):
-                            for ll in range(1, ll_max + 1):         
-                        for lh in range(1, max_gaylord_height // base_h + 1):
-                            for ll in range(1, max_gaylord_length // cut + 1):
+                            for ll in range(1, ll_max + 1):
                                 bw = lw * base_w
                                 bh = lh * base_h
                                 bl = ll * cut
@@ -107,11 +104,10 @@ if st.button("🚀 Run Optimization"):
                                             'Density': density
                                         }
                 if best:
-                    pw, pl, ph = pallet_width, pallet_length, pallet_max_height
                     box_w, box_h, box_l = best['Box Width/mm'], best['Box Height/mm'], best['Box Length/mm']
-                    wf = pw // box_w
-                    lf = pl // box_l
-                    hf = ph // box_h
+                    wf = pallet_width // box_w
+                    lf = pallet_length // box_l
+                    hf = pallet_max_height // box_h
                     pallet_count = wf * lf * hf
                     pallet_density_comment = "✅ Efficient pallet usage" if pallet_count > 0 else "❌ Box doesn't fit on pallet"
                     best.update({
@@ -126,9 +122,9 @@ if st.button("🚀 Run Optimization"):
             df = pd.DataFrame(results)
 
             grouped = df.groupby(['Box Width/mm', 'Box Height/mm', 'Box Length/mm'])
-            profile_combos = grouped['Cut mm'].apply(lambda x: ', '.join(map(str, sorted(set(x))))).reset_index(name='Cut Lengths in Opt Box (mm)')
+            cut_lengths = grouped['Cut mm'].apply(lambda x: ', '.join(str(int(c)) for c in sorted(x.unique()))).reset_index(name='Cut Lengths in Opt Box')
             total_items = grouped['Profiles/Box'].sum().reset_index(name='Total Profiles in Opt Box')
-            df = df.merge(profile_combos, on=['Box Width/mm', 'Box Height/mm', 'Box Length/mm'])
+            df = df.merge(cut_lengths, on=['Box Width/mm', 'Box Height/mm', 'Box Length/mm'])
             df = df.merge(total_items, on=['Box Width/mm', 'Box Height/mm', 'Box Length/mm'])
 
             st.success("✅ Optimization Complete")
@@ -141,7 +137,9 @@ if st.button("🚀 Run Optimization"):
 
             st.markdown("""
             #### 📌 Notes:
-            - Profiles grouped by optimized box width/height/length.
-            - Optimized to maintain density ≥ 70% and minimize box size variety.
-            - Ensures total box weight does not exceed Gaylord weight limit.
+            - Box selection optimized to maintain density ≥ 70%.
+            - Boxes respect Gaylord constraints (W, H, L, weight).
+            - Pallet layout respects pallet dimensions.
+            - Same box width and height used across multiple cut lengths to reduce cost.
+            - Cut lengths are grouped under each optimized box size.
             """)
