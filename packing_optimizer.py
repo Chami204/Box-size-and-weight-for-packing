@@ -4,7 +4,7 @@ from math import ceil
 from io import BytesIO
 
 st.set_page_config(page_title="📦 Profile Packing Optimizer", page_icon="📦")
-st.title("📦 Profile Packing Optimizer - Maximize Fit by Weight")
+st.title("📦 Profile Packing Optimizer")
 
 # ---------- 1. GAYLORD CONSTRAINTS ----------
 st.header("1️⃣ Gaylord Constraints")
