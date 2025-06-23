@@ -52,7 +52,7 @@ else:
         "Cut Unit":["mm","mm"],
     })
     editable_data = st.data_editor(default_data, num_rows='dynamic', use_container_width=True,
-        column_config={"Cut Unit":st.column_config.SelectboxColumn(label="Cut Unit",options=["mm","cm","m","inches"])})
+        column_config={"Cut Unit":st.column_config.SelectboxColumn(label="Cut Unit",options=["mm","cm","m","inches"])} )
 
 # Helpers
 def convert_to_mm(length, unit): return {'mm':length,'cm':length*10,'m':length*1000,'inches':length*25.4}.get(unit,length)
@@ -110,67 +110,58 @@ if st.button("🚀 Run Optimization"):
                 })
             df=pd.DataFrame(results)
             # ----- Heuristic: cluster width-height combos into box size variants -----
-            # Extract numeric dims
             whl = df['Box W×H×L mm'].str.split('×', expand=True).astype(int)
             whl.columns = ['W','H','L']
-            # Determine max groups based on number of unique lengths
             unique_L = sorted(whl['L'].unique())
             m = len(unique_L)
-            if m <= 5:
-                max_groups = 1
-            elif m <= 10:
-                max_groups = 2
-            elif m <= 20:
-                max_groups = 3
-            else:
-                max_groups = min(5, m)
-            
-            # Attempt KMeans clustering on W,H
+            max_groups = 1 if m <= 5 else 2 if m <= 10 else 3 if m <= 20 else min(5, m)
+
             try:
                 from sklearn.cluster import KMeans
                 coords = whl[['W','H']]
                 kmeans = KMeans(n_clusters=max_groups, random_state=42).fit(coords)
                 labels = kmeans.labels_
                 centers = kmeans.cluster_centers_
-                # Round up centers
                 opt_centers = [(int(ceil(x)), int(ceil(y))) for x,y in centers]
                 df['cluster'] = labels
-                # Map center dims back
                 df['optW'] = df['cluster'].apply(lambda i: opt_centers[i][0])
                 df['optH'] = df['cluster'].apply(lambda i: opt_centers[i][1])
             except ImportError:
-                # Fallback to quantile grouping
                 df['cluster'] = pd.qcut(whl['L'], q=max_groups, labels=False, duplicates='drop')
                 opt_wh = df.groupby('cluster').apply(lambda g: pd.Series({
                     'optW': whl.loc[g.index,'W'].max(),
                     'optH': whl.loc[g.index,'H'].max()
                 })).reset_index()
                 df = df.merge(opt_wh, on='cluster')
-            
-            # Build optimized box dims keeping L
-            df['Opt Box W×H×L mm'] = df.apply(
-                lambda r: f"{r['optW']}×{r['optH']}×{whl.at[r.name,'L']}", axis=1)
-            # Recalculate pallet fit for optimized boxes
+
+            df['Opt Box W×H×L mm'] = df.apply(lambda r: f"{r['optW']}×{r['optH']}×{whl.at[r.name,'L']}", axis=1)
             df['Opt W'] = df['optW']; df['Opt H'] = df['optH']; df['Opt L'] = whl['L']
             df['Opt Boxes/Pallet'] = (
-                pallet_width // df['Opt W']
-                * pallet_length // df['Opt L']
-                * pallet_max_height // df['Opt H']
+                pallet_width // df['Opt W'] * pallet_length // df['Opt L'] * pallet_max_height // df['Opt H']
             )
             df['Opt Pallet Layout'] = df.apply(
                 lambda r: f"{pallet_width//r['Opt W']}×{pallet_length//r['Opt L']}×{pallet_max_height//r['Opt H']}", axis=1
             )
+
+            grouped = df.groupby(['Opt W', 'Opt H', 'Opt L'])
+            profile_combos = grouped['Profile'].apply(lambda x: ', '.join(x.unique())).reset_index(name='Profiles in Opt Box')
+            total_items = grouped['Items/Box'].sum().reset_index(name='Count in Opt Box')
+            df = df.merge(profile_combos, on=['Opt W','Opt H','Opt L'])
+            df = df.merge(total_items, on=['Opt W','Opt H','Opt L'])
+            df['Opt Volume m3'] = (df['Opt W'] * df['Opt H'] * df['Opt L']) / 1e9
+            df['Used Volume m3'] = df['Cut mm'] * df['Items/Box'] * whl['W'] * whl['H'] / 1e9
+            df['Opt Density'] = (df['Used Volume m3'] / df['Opt Volume m3']).clip(upper=1.0)
+            df['Opt Density Comment'] = df['Opt Density'].apply(lambda d: "🏆 Good density" if d >= 0.7 else "⚠️ Low density")
+
             df.drop(columns=['cluster','optW','optH'], inplace=True)
 
             st.success("✅ Optimization Complete")
             st.dataframe(df,use_container_width=True)
 
-            # download
             out=BytesIO()
             with pd.ExcelWriter(out,engine='openpyxl') as w: df.to_excel(w,index=False,sheet_name='Results')
             st.download_button("📥 Download Results",out.getvalue(),"results.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-        # ---------- 5. PALLET VISUALIZATION ----------
         st.header("📊 Pallet Layout Visualization")
         idx=st.selectbox("Select profile to visualize:",options=df.index,format_func=lambda i:df.at[i,'Profile'])
         if st.button("🔍 Show Layout"):
@@ -179,9 +170,7 @@ if st.button("🚀 Run Optimization"):
             bw,bh=row['Box W×H×L mm'].split('×')[:2]
             bw,bh=int(bw),int(bh)
             fig,ax=plt.subplots()
-            # draw pallet border
             ax.add_patch(plt.Rectangle((0,0),(pallet_width),(pallet_length),fill=False,edgecolor='black',linewidth=2))
-            # draw boxes on base layer
             for i in range(wf):
                 for j in range(lf):
                     ax.add_patch(plt.Rectangle((i*bw,j*bh),bw,bh,fill=True,facecolor='skyblue',edgecolor='white'))
