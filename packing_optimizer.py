@@ -1,23 +1,29 @@
 import streamlit as st
 import pandas as pd
 from math import ceil
+from itertools import permutations
 from io import BytesIO
+try:
+    import matplotlib.pyplot as plt
+except ImportError:
+    plt = None
+    st.warning("matplotlib is not installed. Pallet visualization is disabled.")
 
 st.set_page_config(page_title="📦 Profile Packing Optimizer", page_icon="📦")
-st.title("📦 Profile Packing Optimizer - Optimize Box & Pallet")
+st.title("📦 Profile Packing Optimizer - Maximize Fit by Weight & Pallet Layout")
 
-# 1. Gaylord Constraints
+# ---------- 1. GAYLORD CONSTRAINTS ----------
 st.header("1️⃣ Gaylord Constraints")
 col1, col2, col3 = st.columns(3)
 with col1:
-    max_weight = st.number_input("Maximum Gaylord Weight (kg)", min_value=0.1, value=1000.0)
+    max_weight = st.number_input("Maximum Gaylord Weight (kg)", min_value=0.1, value=1000.0, format="%.2f")
 with col2:
     max_gaylord_width = st.number_input("Maximum Gaylord Width (mm)", min_value=1, value=1200)
 with col3:
     max_gaylord_height = st.number_input("Maximum Gaylord Height (mm)", min_value=1, value=1200)
 max_gaylord_length = st.number_input("Maximum Gaylord Length (mm)", min_value=1, value=1200)
 
-# 2. Pallet Constraints
+# ---------- 2. PALLET CONSTRAINTS ----------
 st.header("2️⃣ Pallet Constraints")
 col1, col2, col3 = st.columns(3)
 with col1:
@@ -26,105 +32,149 @@ with col2:
     pallet_length = st.number_input("Pallet Length (mm)", min_value=1, value=1100)
 with col3:
     pallet_max_height = st.number_input("Pallet Max Height (mm)", min_value=1, value=2000)
+used_pallet_size = f"{pallet_width}×{pallet_length}×{pallet_max_height} mm"
 
-# 3. Input Table
-def convert_to_mm(length, unit):
-    return {'mm': length, 'cm': length*10, 'm': length*1000, 'inches': length*25.4}.get(unit, length)
+# ---------- 3. PROFILE + CUT LENGTH INPUT ----------
 st.header("3️⃣ Profile + Cut Lengths Input Table")
-uploaded = st.file_uploader("Upload .csv or .xlsx", type=["csv","xlsx"])
-if uploaded:
-    df_input = pd.read_csv(uploaded) if uploaded.name.endswith('.csv') else pd.read_excel(uploaded)
-else:
-    df_input = pd.DataFrame({
-        'Profile Name': ['A','B'],
-        'Unit Weight (kg/m)': [1.5,2.0],
-        'Profile Width (mm)': [50,60],
-        'Profile Height (mm)': [60,70],
-        'Cut Length': [585,737],
-        'Cut Unit': ['mm','mm']
-    })
-    df_input = st.data_editor(df_input, use_container_width=True,
-        column_config={'Cut Unit': st.column_config.SelectboxColumn(label='Unit', options=['mm','cm','m','inches'])})
-
-# 4. Run Optimization
-if st.button("🚀 Run Optimization"):
-    if df_input.empty:
-        st.warning("Enter data to proceed")
+uploaded_file = st.file_uploader("Upload Profile Data (.csv or .xlsx)", type=["csv","xlsx"])
+if uploaded_file:
+    if uploaded_file.name.endswith('.csv'):
+        editable_data = pd.read_csv(uploaded_file)
     else:
-        # Preliminary best per-profile cross-section
-        best_sections = []
-        for _, r in df_input.iterrows():
-            cut_mm = convert_to_mm(r['Cut Length'], r['Cut Unit'])
-            uw = r['Unit Weight (kg/m)']
-            pw = r['Profile Width (mm)']; ph = r['Profile Height (mm)']
-            # number of items by dimension
-            n_w = max_gaylord_width // pw
-            n_h = max_gaylord_height // ph
-            n_l = max_gaylord_length // cut_mm
-            w_box = n_w * pw; h_box = n_h * ph
-            best_sections.append((w_box, h_box))
-        # find two most common
-        sec_series = pd.Series(best_sections)
-        common = sec_series.value_counts().index[:2]
-        common_dims = list(common)
+        editable_data = pd.read_excel(uploaded_file)
+else:
+    default_data = pd.DataFrame({
+        "Profile Name":["Profile A","Profile B"],
+        "Unit Weight (kg/m)":[1.5,2.0],
+        "Profile Width (mm)":[50.0,60.0],
+        "Profile Height (mm)":[60.0,70.0],
+        "Cut Length":[2500,3000],
+        "Cut Unit":["mm","mm"],
+    })
+    editable_data = st.data_editor(default_data, num_rows='dynamic', use_container_width=True,
+        column_config={"Cut Unit":st.column_config.SelectboxColumn(label="Cut Unit",options=["mm","cm","m","inches"])} )
 
-        results = []
-        # evaluate each profile against common dims
-        for _, r in df_input.iterrows():
-            cut_mm = convert_to_mm(r['Cut Length'], r['Cut Unit'])
-            uw = r['Unit Weight (kg/m)']
-            pw = r['Profile Width (mm)']; ph = r['Profile Height (mm)']
-            best_opt = None
-            for w_box, h_box in common_dims:
-                # profiles per box by dims
-                n_w = w_box // pw
-                n_h = h_box // ph
-                n_l = max_gaylord_length // cut_mm
-                count_dim = n_w * n_h * n_l
-                # cap by weight
-                max_by_wt = int(max_weight // (uw * (cut_mm/1000)))
-                total = min(count_dim, max_by_wt)
-                if total <= 0:
+# Helpers
+def convert_to_mm(length, unit): return {'mm':length,'cm':length*10,'m':length*1000,'inches':length*25.4}.get(unit,length)
+
+def get_factor_pairs(n):
+    pairs=[]
+    for i in range(1,int(n**0.5)+1):
+        if n % i ==0: pairs.append((i,n//i))
+    return pairs
+
+# ---------- 4. RUN & OPTIMIZATION ----------
+if st.button("🚀 Run Optimization"):
+    if editable_data.empty:
+        st.warning("⚠️ Please upload or enter profiles to proceed.")
+    else:
+        with st.spinner("Optimizing box & pallet...\nThis may take a moment."):
+            results=[]
+            for _,row in editable_data.iterrows():
+                if row['Cut Length']<=0 or row['Unit Weight (kg/m)']<=0: continue
+                name=row['Profile Name']; uw=row['Unit Weight (kg/m)']
+                w=row['Profile Width (mm)']; h=row['Profile Height (mm)']
+                cut=convert_to_mm(row['Cut Length'],row['Cut Unit'])
+                weight_item=uw*(cut/1000)
+                count=int(max_weight//weight_item) or 1
+                best=None; bd=float('inf'); dd=float('inf'); bc=0
+                for c in range(count,0,-1):
+                    for fw,fh in get_factor_pairs(c):
+                        for wc,hc in ((fw,fh),(fh,fw)):
+                            lc=c//(wc*hc) if wc*hc>0 else 0
+                            if wc*hc*lc!=c: continue
+                            bw=wc*w; bh=hc*h; bl=lc*cut
+                            if bw>max_gaylord_width or bh>max_gaylord_height or bl>max_gaylord_length: continue
+                            diff=abs(bw-bh); dev=max(bw,bh,bl)-min(bw,bh,bl)
+                            if diff<bd or (diff==bd and dev<dd): best={'W':ceil(bw),'H':ceil(bh),'L':ceil(bl),'Fit':c}; bd,dd=diff,dev; bc=c
+                    if best: break
+                if not best:
+                    st.warning(f"⚠️ '{name}' cannot fit any box under constraints.")
                     continue
-                # density
-                vol_box = (w_box * h_box * (n_l*cut_mm)) / 1e9
-                used_vol = (pw * ph * cut_mm * total) / 1e9
-                density = used_vol/vol_box if vol_box>0 else 0
-                if best_opt is None or density > best_opt['density']:
-                    best_opt = dict(
-                        Profile=r['Profile Name'],
-                        **{'Cut length/mm': cut_mm,
-                           'Box Width/mm': w_box,
-                           'Box Height/mm': h_box,
-                           'Box Length/mm': n_l*cut_mm,
-                           'Number of profiles/box': total,
-                           'Box density comment': '🏆 Good density' if density>=0.7 else '⚠️ Low density',
-                           'density': density}
-                    )
-            if best_opt:
-                bw = best_opt['Box Width/mm']; bh = best_opt['Box Height/mm']; bl = best_opt['Box Length/mm']
-                wf = pallet_width//bw; lf = pallet_length//bl; hf = pallet_max_height//bh
-                boxes_pallet = wf*lf*hf
-                best_opt.update({
-                    'Pallet W (mm)': pallet_width,
-                    'Pallet H (mm)': pallet_max_height,
-                    'Pallet L (mm)': pallet_length,
-                    'Number of Boxes/pallet': boxes_pallet,
-                    'pallet density comment': '✅ Efficient pallet usage' if boxes_pallet>0 else '❌ Does not fit'
+                vol_box=(best['W']*best['H']*best['L'])/1e9
+                used_vol=bc*(w*h*cut)/1e9
+                density=used_vol/vol_box if vol_box>0 else 0
+                dcom="🏆 Good density" if density>=0.7 else "⚠️ Low density"
+                wf=pallet_width//best['W']; lf=pallet_length//best['L']; hf=pallet_max_height//best['H']
+                pal_count=wf*lf*hf
+                results.append({
+                    'Profile':name,
+                    'Cut mm':cut,
+                    'Items/Box':best['Fit'],
+                    'Box W×H×L mm':f"{best['W']}×{best['H']}×{best['L']}",
+                    'Density':f"{density*100:.1f}%",
+                    'Density Comment':dcom,
+                    'Boxes/Pallet':pal_count,
+                    'Pallet Layout':f"{wf}×{lf}×{hf}",
+                    'Used Pallet Size':used_pallet_size
                 })
-                results.append(best_opt)
+            df=pd.DataFrame(results)
+            # ----- Heuristic: cluster width-height combos into box size variants -----
+            whl = df['Box W×H×L mm'].str.split('×', expand=True).astype(int)
+            whl.columns = ['W','H','L']
+            unique_L = sorted(whl['L'].unique())
+            m = len(unique_L)
+            max_groups = 1 if m <= 5 else 2 if m <= 10 else 3 if m <= 20 else min(5, m)
 
-        df_out = pd.DataFrame(results)[[
-            'Profile','Cut length/mm','Box Width/mm','Box Height/mm','Box Length/mm',
-            'Number of profiles/box','Box density comment',
-            'Pallet W (mm)','Pallet H (mm)','Pallet L (mm)',
-            'Number of Boxes/pallet','pallet density comment'
-        ]]
-        st.success("✅ Optimization Complete")
-        st.dataframe(df_out, use_container_width=True)
+            try:
+                from sklearn.cluster import KMeans
+                coords = whl[['W','H']]
+                kmeans = KMeans(n_clusters=max_groups, random_state=42).fit(coords)
+                labels = kmeans.labels_
+                centers = kmeans.cluster_centers_
+                opt_centers = [(int(ceil(x)), int(ceil(y))) for x,y in centers]
+                df['cluster'] = labels
+                df['optW'] = df['cluster'].apply(lambda i: opt_centers[i][0])
+                df['optH'] = df['cluster'].apply(lambda i: opt_centers[i][1])
+            except ImportError:
+                df['cluster'] = pd.qcut(whl['L'], q=max_groups, labels=False, duplicates='drop')
+                opt_wh = df.groupby('cluster').apply(lambda g: pd.Series({
+                    'optW': whl.loc[g.index,'W'].max(),
+                    'optH': whl.loc[g.index,'H'].max()
+                })).reset_index()
+                df = df.merge(opt_wh, on='cluster')
 
-        outbuf=BytesIO()
-        with pd.ExcelWriter(outbuf, engine='openpyxl') as w:
-            df_out.to_excel(w, index=False, sheet_name='Results')
-        st.download_button("📥 Download Results", outbuf.getvalue(), "optimized_packing.xlsx",
-                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            df['Opt Box W×H×L mm'] = df.apply(lambda r: f"{r['optW']}×{r['optH']}×{whl.at[r.name,'L']}", axis=1)
+            df['Opt W'] = df['optW']; df['Opt H'] = df['optH']; df['Opt L'] = whl['L']
+            df['Opt Boxes/Pallet'] = (
+                pallet_width // df['Opt W'] * pallet_length // df['Opt L'] * pallet_max_height // df['Opt H']
+            )
+            df['Opt Pallet Layout'] = df.apply(
+                lambda r: f"{pallet_width//r['Opt W']}×{pallet_length//r['Opt L']}×{pallet_max_height//r['Opt H']}", axis=1
+            )
+
+            grouped = df.groupby(['Opt W', 'Opt H', 'Opt L'])
+            profile_combos = grouped['Profile'].apply(lambda x: ', '.join(x.unique())).reset_index(name='Profiles in Opt Box')
+            total_items = grouped['Items/Box'].sum().reset_index(name='Count in Opt Box')
+            df = df.merge(profile_combos, on=['Opt W','Opt H','Opt L'])
+            df = df.merge(total_items, on=['Opt W','Opt H','Opt L'])
+            df['Opt Volume m3'] = (df['Opt W'] * df['Opt H'] * df['Opt L']) / 1e9
+            df['Used Volume m3'] = df['Cut mm'] * df['Items/Box'] * whl['W'] * whl['H'] / 1e9
+            df['Opt Density'] = (df['Used Volume m3'] / df['Opt Volume m3']).clip(upper=1.0)
+            df['Opt Density Comment'] = df['Opt Density'].apply(lambda d: "🏆 Good density" if d >= 0.7 else "⚠️ Low density")
+
+            df.drop(columns=['cluster','optW','optH'], inplace=True)
+
+            st.success("✅ Optimization Complete")
+            st.dataframe(df,use_container_width=True)
+
+            out=BytesIO()
+            with pd.ExcelWriter(out,engine='openpyxl') as w: df.to_excel(w,index=False,sheet_name='Results')
+            st.download_button("📥 Download Results",out.getvalue(),"results.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+        st.header("📊 Pallet Layout Visualization")
+        idx=st.selectbox("Select profile to visualize:",options=df.index,format_func=lambda i:df.at[i,'Profile'])
+        if st.button("🔍 Show Layout"):
+            row=df.loc[idx]
+            wf,lf,hf = map(int,row['Pallet Layout'].split('×'))
+            bw,bh=row['Box W×H×L mm'].split('×')[:2]
+            bw,bh=int(bw),int(bh)
+            fig,ax=plt.subplots()
+            ax.add_patch(plt.Rectangle((0,0),(pallet_width),(pallet_length),fill=False,edgecolor='black',linewidth=2))
+            for i in range(wf):
+                for j in range(lf):
+                    ax.add_patch(plt.Rectangle((i*bw,j*bh),bw,bh,fill=True,facecolor='skyblue',edgecolor='white'))
+            ax.set_xlim(0,pallet_width); ax.set_ylim(0,pallet_length)
+            ax.set_aspect('equal', 'box')
+            ax.set_xlabel('Width mm'); ax.set_ylabel('Length mm')
+            st.pyplot(fig)
