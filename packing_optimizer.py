@@ -115,7 +115,7 @@ if st.button("🚀 Run Optimization"):
             df = pd.DataFrame(results)
 
             grouped = df.groupby(['Box Width/mm', 'Box Height/mm', 'Box Length/mm'])
-            profile_combos = grouped['Profile'].apply(lambda x: ', '.join(x.unique())).reset_index(name='Profiles in Opt Box')
+            profile_combos = grouped['Cut mm'].apply(lambda x: ', '.join(map(str, sorted(set(x))))).reset_index(name='Cut Lengths in Opt Box (mm)')
             total_items = grouped['Profiles/Box'].sum().reset_index(name='Total Profiles in Opt Box')
             df = df.merge(profile_combos, on=['Box Width/mm', 'Box Height/mm', 'Box Length/mm'])
             df = df.merge(total_items, on=['Box Width/mm', 'Box Height/mm', 'Box Length/mm'])
