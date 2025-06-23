@@ -109,58 +109,25 @@ if st.button("🚀 Run Optimization"):
                     'Used Pallet Size':used_pallet_size
                 })
             df=pd.DataFrame(results)
-            # ----- Heuristic: cluster width-height combos into box size variants -----
-            # Extract numeric dims
-            whl = df['Box W×H×L mm'].str.split('×', expand=True).astype(int)
-            whl.columns = ['W','H','L']
-            # Determine max groups based on unique lengths
-            unique_L = sorted(whl['L'].unique())
-            m = len(unique_L)
-            if m <= 5:
-                max_groups = 1
-            elif m <= 10:
-                max_groups = 2
-            elif m <= 20:
-                max_groups = 3
-            else:
-                max_groups = min(5, m)
-            
-            # Attempt clustering on W,H
-            try:
-                from sklearn.cluster import KMeans
-                coords = whl[['W','H']]
-                kmeans = KMeans(n_clusters=max_groups, random_state=42).fit(coords)
-                df['cluster'] = kmeans.labels_
-            except ImportError:
-                # Fallback to quantile grouping on lengths
-                df['cluster'] = pd.qcut(whl['L'], q=max_groups, labels=False, duplicates='drop')
-
-            # For each cluster, compute square cross-section D = max(W,H)
-            cluster_dims = df.groupby('cluster').apply(
-                lambda g: max(
-                    whl.loc[g.index, 'W'].max(),
-                    whl.loc[g.index, 'H'].max()
-                )
-            ).to_dict()
-            # Map square dims back
-            df['optD'] = df['cluster'].map(cluster_dims)
-
-            # Build optimized box dims: square cross-section and original L
-            df['Opt Box W×H×L mm'] = df.apply(
-                lambda r: f"{r['optD']}×{r['optD']}×{whl.at[r.name,'L']}", axis=1
-            )
-            # Recalculate pallet fit for optimized boxes
-            df['Opt W'] = df['optD']; df['Opt H'] = df['optD']; df['Opt L'] = whl['L']
+            # ----- Heuristic: enforce square cross-section per box -----
+            # Parse original box dimensions
+            dims = df['Box W×H×L mm'].str.split('×', expand=True).astype(int)
+            dims.columns = ['W','H','L']
+            # Enforce square cross-section (use max of W,H)
+            df['Opt Box W×H×L mm'] = dims.apply(lambda r: f"{max(r['W'], r['H'])}×{max(r['W'], r['H'])}×{r['L']}", axis=1)
+            # Recalculate optimized dims
+            df[['Opt W','Opt H','Opt L']] = df['Opt Box W×H×L mm'].str.split('×', expand=True).astype(int)
+            # Recalculate pallet fit with square boxes
             df['Opt Boxes/Pallet'] = (
-                (pallet_width // df['Opt W'])
-                * (pallet_length // df['Opt L'])
-                * (pallet_max_height // df['Opt H'])
+                (pallet_width // df['Opt W']) *
+                (pallet_length // df['Opt L']) *
+                (pallet_max_height // df['Opt H'])
             )
             df['Opt Pallet Layout'] = df.apply(
-                lambda r: f"{pallet_width//r['Opt W']}×{pallet_length//r['Opt L']}×{pallet_max_height//r['Opt H']}", axis=1
+                lambda r: f"{pallet_width//r['Opt W']}×{pallet_length//r['Opt L']}×{pallet_max_height//r['Opt H']}",
+                axis=1
             )
-            # Clean up
-            df.drop(columns=['cluster','optD'], inplace=True)
+            # Density comment remains unchanged
 
             st.success("✅ Optimization Complete")
             st.dataframe(df,use_container_width=True)
