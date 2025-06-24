@@ -67,78 +67,44 @@ if st.button("🚀 Run Optimization", type="primary"):
             results = []
             editable_data["Cut Length (mm)"] = editable_data.apply(lambda row: convert_to_mm(row["Cut Length"], row["Cut Unit"]), axis=1)
             profiles = editable_data.to_dict("records")
-            used_profiles = set()
 
-            # Try to combine profiles logically
             for i, p1 in enumerate(profiles):
-                if i in used_profiles:
-                    continue
-                combination = [p1]
-                for j, p2 in enumerate(profiles):
-                    if j != i and j not in used_profiles:
-                        if abs(p1["Cut Length (mm)"] - p2["Cut Length (mm)"]*2) <= 50 or abs(p1["Cut Length (mm)"] - p2["Cut Length (mm)"] + profiles[i]["Cut Length (mm)"]) <= 50:
-                            combination.append(p2)
-                            used_profiles.add(j)
-                used_profiles.add(i)
-
-                # Box config based on same width & height
+                profile_name = p1["Profile Name"]
                 profile_width = p1["Profile Width (mm)"]
                 profile_height = p1["Profile Height (mm)"]
 
-                best_box = None
-                best_density = 0
-                total_profiles = 0
-                cut_details = []
+                # Evaluate single cut length option first
+                cut_length = p1["Cut Length (mm)"]
+                unit_weight = p1["Unit Weight (kg/m)"]
+                count_fit = get_box_fit(profile_width, profile_height, max_gaylord_width, max_gaylord_height)
+                max_len = max_gaylord_length // cut_length
+                profiles_fit = count_fit * max_len
+                box_weight = profiles_fit * unit_weight * (cut_length/1000)
 
-                for combo in combination:
-                    cut_length = combo["Cut Length (mm)"]
-                    unit_weight = combo["Unit Weight (kg/m)"]
-                    count_fit = get_box_fit(profile_width, profile_height, max_gaylord_width, max_gaylord_height)
-                    max_len = max_gaylord_length // cut_length
-                    profiles_fit = count_fit * max_len
+                while box_weight > max_weight and profiles_fit > 0:
+                    profiles_fit -= 1
                     box_weight = profiles_fit * unit_weight * (cut_length/1000)
 
-                    while box_weight > max_weight and profiles_fit > 0:
-                        profiles_fit -= 1
-                        box_weight = profiles_fit * unit_weight * (cut_length/1000)
-
-                    if profiles_fit == 0:
-                        continue
-
+                if profiles_fit > 0:
                     vol_box = (profile_width * profile_height * cut_length * profiles_fit) / 1e9
                     total_box_vol = (max_gaylord_width * max_gaylord_height * cut_length * max_len) / 1e9
-                    density = vol_box / total_box_vol
+                    density = vol_box / total_box_vol if total_box_vol > 0 else 0
 
-                    if density > best_density:
-                        best_density = density
-                        best_box = {
-                            "W": max_gaylord_width,
-                            "H": max_gaylord_height,
-                            "L": cut_length * max_len,
-                            "Fit": profiles_fit,
-                            "Cut Length": cut_length,
-                            "Weight": round(box_weight,2),
-                        }
-                        cut_details = [f"{profiles_fit} of {cut_length}mm"]
-                        total_profiles = profiles_fit
-
-                if best_box:
-                    # Pallet Calculation
-                    w_fit = pallet_width // best_box['W']
-                    l_fit = pallet_length // best_box['L']
-                    h_fit = pallet_max_height // best_box['H']
+                    w_fit = pallet_width // max_gaylord_width
+                    l_fit = pallet_length // (cut_length * max_len)
+                    h_fit = pallet_max_height // max_gaylord_height
                     pallet_count = w_fit * l_fit * h_fit
 
                     results.append({
-                        "Profile Name": p1["Profile Name"],
-                        "Cut Lengths Included": ", ".join(cut_details),
-                        "Box W×H×L (mm)": f"{best_box['W']}×{best_box['H']}×{best_box['L']}",
-                        "Profiles in Box": total_profiles,
-                        "Profiles of Same Cut in Box": best_box['Fit'],
-                        "Box Weight (kg)": best_box['Weight'],
-                        "Density (%)": f"{round(best_density*100,1)}%",
+                        "Profile Name": profile_name,
+                        "Cut Lengths Included": f"{profiles_fit} of {cut_length}mm only",
+                        "Box W×H×L (mm)": f"{max_gaylord_width}×{max_gaylord_height}×{cut_length * max_len}",
+                        "Profiles in Box": profiles_fit,
+                        "Profiles of Same Cut in Box": profiles_fit,
+                        "Box Weight (kg)": round(box_weight, 2),
+                        "Density (%)": f"{round(density*100,1)}%",
                         "Boxes per Pallet": pallet_count,
-                        "Pallet Arrangement": f"{w_fit}×{l_fit}×{h_fit}" if pallet_count>0 else "❌"
+                        "Pallet Arrangement": f"{w_fit}×{l_fit}×{h_fit}" if pallet_count > 0 else "❌"
                     })
 
             if results:
