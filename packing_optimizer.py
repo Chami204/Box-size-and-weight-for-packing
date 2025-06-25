@@ -189,6 +189,8 @@ if st.button("🚀 Run Optimization", type="primary"):
                                "results.xlsx",
                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+# ... (keep all previous code until the second table section)
+
             # ---------- 5. SECOND TABLE: MOST OPTIMIZED BOX SIZES ----------
             st.subheader("📦 Most Optimized Box Sizes Table")
 
@@ -205,20 +207,51 @@ if st.button("🚀 Run Optimization", type="primary"):
                 if profile_name in profile_box_info:
                     box_info = profile_box_info[profile_name]
                     box_weight = row["Unit Weight (kg/m)"] * (row["Cut Length (mm)"]/1000) * box_info["Items per Box"]
-                    if box_weight < 0.6 * max_weight:
+                    if box_weight < 0.5 * max_weight:
                         light_profiles.append({
                             'name': profile_name,
                             'weight': box_weight,
-                            'original_box': box_info["Box W×H×L (mm)"],
+                            'cut_length': row["Cut Length (mm)"],
                             'profile_row': row
                         })
             
-            # Optimize box dimensions for light profiles
-            optimized_W, optimized_H = optimize_light_boxes(
-                light_profiles, editable_data, 
-                max_weight, max_gaylord_width, max_gaylord_height, max_gaylord_length
-            )
-
+            # Optimize box dimensions for light profiles (only width/height)
+            if light_profiles:
+                # Find the light profile with highest weight
+                heaviest_light = max(light_profiles, key=lambda x: x['weight'])
+                profile = heaviest_light['profile_row']
+                
+                # Calculate target weight (60% of max weight)
+                target_weight = 0.6 * max_weight
+                item_weight = profile["Unit Weight (kg/m)"] * (profile["Cut Length (mm)"]/1000)
+                required_items = max(1, int(target_weight // item_weight))
+                
+                # Find best width/height configuration that can hold required_items
+                # while keeping length equal to cut length
+                best_fit = 0
+                optimized_W = None
+                optimized_H = None
+                
+                # Try different width/height combinations
+                for w_count in range(1, int(max_gaylord_width // profile["Profile Width (mm)"]) + 1):
+                    for h_count in range(1, int(max_gaylord_height // profile["Profile Height (mm)"]) + 1):
+                        total_fit = w_count * h_count  # Only 1 layer in length
+                        if total_fit >= required_items:
+                            box_w = w_count * profile["Profile Width (mm)"]
+                            box_h = h_count * profile["Profile Height (mm)"]
+                            
+                            # Check if it fits in gaylord dimensions
+                            if (box_w <= max_gaylord_width and 
+                                box_h <= max_gaylord_height and
+                                profile["Cut Length (mm)"] <= max_gaylord_length):
+                                
+                                # Prefer more square dimensions
+                                if (optimized_W is None or 
+                                    abs(box_w - box_h) < abs(optimized_W - optimized_H)):
+                                    optimized_W = box_w
+                                    optimized_H = box_h
+                                    best_fit = total_fit
+            
             for _, row in editable_data.iterrows():
                 profile_name = row["Profile Name"]
                 cut_mm = row["Cut Length (mm)"]
@@ -242,27 +275,29 @@ if st.button("🚀 Run Optimization", type="primary"):
                 
                 box_info = profile_box_info[profile_name]
                 original_box_weight = weight_item * box_info["Items per Box"]
-                original_W, original_H, original_L = map(int, box_info["Box W×H×L (mm)"].split("×"))
                 
-                if original_box_weight < 0.5 * max_weight and optimized_W and optimized_H:
-                    # For light profiles: use optimized width and height, keep original length
+                # Check if this is a light profile and we found optimized dimensions
+                is_light = original_box_weight < 0.5 * max_weight
+                if is_light and optimized_W and optimized_H:
+                    # For light profiles: use optimized width and height, cut length as box length
                     box_w = optimized_W
                     box_h = optimized_H
-                    box_l = cut_mm  # Keep original cut length as box length
+                    box_l = cut_mm  # Always use exact cut length
                     
                     # Calculate how many profiles fit in this optimized box
                     w_fit = box_w // profile_width if profile_width > 0 else 0
                     h_fit = box_h // profile_height if profile_height > 0 else 0
-                    actual_fit = w_fit * h_fit  # Only 1 layer since length = cut length
+                    actual_fit = w_fit * h_fit  # Only 1 layer in length
                     
                     # Ensure we don't exceed weight limit
                     max_by_weight = int(max_weight // weight_item) if weight_item > 0 else 0
                     actual_fit = min(actual_fit, max_by_weight) if max_by_weight > 0 else actual_fit
                 else:
-                    # For heavy profiles or if optimization failed: use original box
+                    # For heavy profiles: use original box but enforce cut length as box length
+                    original_W, original_H, original_L = map(int, box_info["Box W×H×L (mm)"].split("×"))
                     box_w = original_W
                     box_h = original_H
-                    box_l = original_L
+                    box_l = cut_mm  # Override original length with cut length
                     actual_fit = box_info["Items per Box"]
                 
                 # Calculate pallet information
@@ -285,6 +320,59 @@ if st.button("🚀 Run Optimization", type="primary"):
                 st.dataframe(pd.DataFrame(box_summary), use_container_width=True)
             else:
                 st.warning("❌ No profiles could be packed using selected optimized box sizes.")
+
+            # ---------- 6. PALLET SIZES TABLE ----------
+            st.subheader("📊 Pallet Sizes Table")
+            
+            # Get all unique box sizes from the optimized results
+            unique_box_sizes = {}
+            for item in box_summary:
+                if item["Optimized Box Size"] != "N/A":
+                    w, h, l = map(int, item["Optimized Box Size"].split("×"))
+                    unique_box_sizes[(w, h, l)] = True
+            
+            if unique_box_sizes:
+                # Determine largest pallet needed based on largest boxes
+                max_box_w = max(size[0] for size in unique_box_sizes)
+                max_box_l = max(size[2] for size in unique_box_sizes)
+                max_box_h = max(size[1] for size in unique_box_sizes)
+                
+                # Calculate pallet dimensions needed
+                pallet_width_needed = min(pallet_width, max_box_w * (pallet_width // max_box_w))
+                pallet_length_needed = min(pallet_length, max_box_l * (pallet_length // max_box_l))
+                pallet_height_needed = min(pallet_max_height, max_box_h * (pallet_max_height // max_box_h))
+                
+                # Create pallet data for each box size
+                pallet_data = []
+                for (w, h, l) in unique_box_sizes:
+                    # Calculate how many boxes fit on the pallet
+                    w_fit = pallet_width_needed // w
+                    l_fit = pallet_length_needed // l
+                    h_fit = pallet_height_needed // h
+                    boxes_per_pallet = w_fit * l_fit * h_fit
+                    
+                    # Find all profiles using this box size
+                    profiles = [item["Profile Name"] for item in box_summary 
+                               if item["Optimized Box Size"] == f"{w}×{h}×{l}"]
+                    
+                    pallet_data.append({
+                        "Box Size (W×H×L)": f"{w}×{h}×{l}",
+                        "Profiles": ", ".join(set(profiles)),
+                        "Boxes per Pallet": boxes_per_pallet,
+                        "Arrangement": f"{w_fit}×{h_fit}×{l_fit}",
+                        "Pallet Size (W×L×H)": f"{pallet_width_needed}×{pallet_length_needed}×{pallet_height_needed}"
+                    })
+                
+                # Create and display the pallet table
+                pallet_df = pd.DataFrame(pallet_data)
+                st.dataframe(pallet_df, use_container_width=True)
+                
+                # Show the largest pallet needed
+                st.markdown(f"**Largest Pallet Needed:** {pallet_width_needed}×{pallet_length_needed}×{pallet_height_needed} mm")
+            else:
+                st.warning("No valid box sizes found for pallet calculation")
+
+# ... (rest of the code remains the same)
 
 # ... (keep all previous code until the end of the second table section)
 
