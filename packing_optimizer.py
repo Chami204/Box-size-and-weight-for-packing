@@ -322,73 +322,95 @@ if st.button("🚀 Run Optimization", type="primary"):
             else:
                 st.warning("❌ No profiles could be packed using selected optimized box sizes.")
 
-                                   # ---------- 6. PALLET SIZES TABLE ----------
-            st.subheader("📊 Pallet Sizes Table")
+                                               # ---------- 6. PALLET CONFIGURATIONS TABLE ----------
+            st.subheader("📊 Pallet Configurations")
             
-            # Prepare pallet data
-            pallet_data = []
-            
+            # Group boxes by their length (since pallet length = box length)
+            length_groups = {}
             for item in box_summary:
                 if item["Optimized Box Size"] == "N/A":
                     continue
-                    
+                
                 try:
-                    # Parse box dimensions
-                    box_w, box_h, box_l = map(int, item["Optimized Box Size"].split("×"))
-                    
-                    # Calculate maximum possible arrangement on full pallet
-                    max_w_fit = pallet_width // box_w
-                    max_l_fit = pallet_length // box_l
-                    max_h_fit = pallet_max_height // box_h
-                    
-                    # Calculate possible reduced pallet sizes for better density
-                    # Option 1: Full pallet size
-                    full_pallet = {
-                        "width": pallet_width,
-                        "length": pallet_length,
-                        "height": pallet_max_height,
-                        "boxes": max_w_fit * max_l_fit * max_h_fit,
-                        "arrangement": f"{max_w_fit}×{max_l_fit}×{max_h_fit}"
-                    }
-                    
-                    # Option 2: Reduced pallet matching exact box multiples
-                    reduced_pallet = {
-                        "width": box_w * max_w_fit,
-                        "length": box_l * max_l_fit,
-                        "height": box_h * min(max_h_fit, 2),  # Limit height for stability
-                        "boxes": max_w_fit * max_l_fit * min(max_h_fit, 2),
-                        "arrangement": f"{max_w_fit}×{max_l_fit}×{min(max_h_fit, 2)}"
-                    }
-                    
-                    # Choose the best option (prioritizing full pallet if it fits well)
-                    if full_pallet["boxes"] >= reduced_pallet["boxes"] * 0.8:  # If full pallet is at least 80% as efficient
-                        pallet = full_pallet
-                    else:
-                        pallet = reduced_pallet
-                    
-                    pallet_data.append({
-                        "Profile": item["Profile Name"],
-                        "Cut Length (mm)": item["Cut Length (mm)"],
-                        "Box Size": item["Optimized Box Size"],
-                        "Boxes per Pallet": pallet["boxes"],
-                        "Arrangement": pallet["arrangement"],
-                        "Pallet Size (W×L×H)": f"{pallet['width']}×{pallet['length']}×{pallet['height']}"
+                    w, h, l = map(int, item["Optimized Box Size"].split("×"))
+                    if l not in length_groups:
+                        length_groups[l] = []
+                    length_groups[l].append({
+                        "profile": item["Profile Name"],
+                        "box_size": (w, h, l),
+                        "weight": item["Total Box Weight (kg)"]
                     })
-                    
-                except Exception as e:
-                    st.warning(f"Could not process box size {item['Optimized Box Size']}: {str(e)}")
+                except:
                     continue
             
-            if pallet_data:
-                # Display the pallet table
-                pallet_df = pd.DataFrame(pallet_data)
-                st.dataframe(pallet_df, use_container_width=True)
-                
-                # Calculate and display the largest pallet needed
-                max_pallet_w = max(int(size.split("×")[0]) for size in pallet_df["Pallet Size (W×L×H)"])
-                max_pallet_l = max(int(size.split("×")[1]) for size in pallet_df["Pallet Size (W×L×H)"])
-                max_pallet_h = max(int(size.split("×")[2]) for size in pallet_df["Pallet Size (W×L×H)"])
-                
-                st.markdown(f"**Largest Pallet Needed:** {max_pallet_w}×{max_pallet_l}×{max_pallet_h} mm")
-            else:
+            if not length_groups:
                 st.warning("No valid box sizes found for pallet calculation")
+            else:
+                pallet_configs = []
+                
+                for box_length, boxes in length_groups.items():
+                    # Pallet dimensions - max width/height, fixed length
+                    pallet_w = pallet_width
+                    pallet_h = pallet_max_height
+                    pallet_l = box_length  # Matches box length
+                    
+                    # Calculate arrangement for each box type in this length group
+                    for box in boxes:
+                        box_w, box_h, _ = box["box_size"]
+                        
+                        # Calculate how many fit width-wise and height-wise
+                        w_fit = pallet_w // box_w
+                        h_fit = pallet_h // box_h
+                        
+                        # Try different layer arrangements to maximize density
+                        max_boxes = 0
+                        best_arrangement = ""
+                        
+                        # Option 1: Single layer (most stable)
+                        boxes_single_layer = w_fit * 1
+                        if boxes_single_layer > max_boxes:
+                            max_boxes = boxes_single_layer
+                            best_arrangement = f"{w_fit}×1"
+                        
+                        # Option 2: Multiple layers if height allows
+                        if h_fit > 1:
+                            boxes_multi_layer = w_fit * h_fit
+                            if boxes_multi_layer > max_boxes:
+                                max_boxes = boxes_multi_layer
+                                best_arrangement = f"{w_fit}×{h_fit}"
+                        
+                        # Option 3: Rotated boxes if it fits better
+                        rotated_w_fit = pallet_w // box_h
+                        rotated_h_fit = pallet_h // box_w
+                        if rotated_w_fit > 0 and rotated_h_fit > 0:
+                            boxes_rotated = rotated_w_fit * rotated_h_fit
+                            if boxes_rotated > max_boxes:
+                                max_boxes = boxes_rotated
+                                best_arrangement = f"{rotated_w_fit}×{rotated_h_fit} (rotated)"
+                        
+                        if max_boxes > 0:
+                            pallet_configs.append({
+                                "Pallet Size": f"{pallet_w}×{pallet_l}×{pallet_h}",
+                                "Box Length (mm)": box_length,
+                                "Box Size": f"{box_w}×{box_h}×{box_l}",
+                                "Profile": box["profile"],
+                                "Boxes per Pallet": max_boxes,
+                                "Arrangement": best_arrangement,
+                                "Total Weight (kg)": round(max_boxes * box["weight"], 2)
+                            })
+                
+                if pallet_configs:
+                    # Sort by pallet size and weight
+                    pallet_df = pd.DataFrame(pallet_configs).sort_values(
+                        ["Pallet Size", "Total Weight (kg)"], 
+                        ascending=[True, False]
+                    )
+                    st.dataframe(pallet_df, use_container_width=True)
+                    
+                    # Show unique pallet sizes needed
+                    unique_pallets = pallet_df["Pallet Size"].unique()
+                    st.markdown("**Required Pallet Sizes:**")
+                    for pallet in unique_pallets:
+                        st.write(f"- {pallet}")
+                else:
+                    st.warning("No valid pallet configurations found")
