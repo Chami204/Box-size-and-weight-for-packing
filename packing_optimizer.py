@@ -77,11 +77,12 @@ if st.button("🚀 Run Optimization", type="primary"):
             editable_data["Cut Length (mm)"] = editable_data.apply(lambda row: convert_to_mm(row["Cut Length"], row["Cut Unit"]), axis=1)
             editable_data["Weight Per Item"] = editable_data.apply(lambda row: row["Unit Weight (kg/m)"] * (row["Cut Length (mm)"]/1000), axis=1)
 
+            box_lookup = {}
+
             for _, row in editable_data.iterrows():
                 if row["Cut Length (mm)"] <= 0 or row["Unit Weight (kg/m)"] <= 0:
                     continue
                 profile_name = row["Profile Name"]
-                unit_weight = row["Unit Weight (kg/m)"]
                 profile_width = row["Profile Width (mm)"]
                 profile_height = row["Profile Height (mm)"]
                 cut_mm = row["Cut Length (mm)"]
@@ -94,6 +95,7 @@ if st.button("🚀 Run Optimization", type="primary"):
                 best_diff = float('inf')
                 best_dev = float('inf')
                 best_count = 0
+
                 for count in range(max_items, 0, -1):
                     for w_count, h_count in get_factor_pairs(count):
                         for wc, hc in ((w_count, h_count), (h_count, w_count)):
@@ -104,7 +106,7 @@ if st.button("🚀 Run Optimization", type="primary"):
                             if box_w>max_gaylord_width or box_h>max_gaylord_height or box_l>max_gaylord_length:
                                 continue
                             wh_ratio = max(box_w, box_h) / min(box_w, box_h)
-                            if wh_ratio > 2:  # Too flat or tall
+                            if wh_ratio > 2:
                                 continue
                             wh_diff = abs(box_w-box_h)
                             deviation = max(box_w,box_h,box_l)-min(box_w,box_h,box_l)
@@ -129,6 +131,9 @@ if st.button("🚀 Run Optimization", type="primary"):
                 h_fit = pallet_max_height//best_box['H'] if best_box['H']>0 else 0
                 pallet_count = w_fit * l_fit * h_fit
 
+                box_key = (best_box['W'], best_box['H'])
+                box_lookup[row["Profile Name"]] = box_key
+
                 results.append({
                     "Profile Name": profile_name,
                     "Cut Length (mm)": round(cut_mm,2),
@@ -151,39 +156,55 @@ if st.button("🚀 Run Optimization", type="primary"):
             # ---------- 5. SECOND TABLE: MOST OPTIMIZED BOX SIZES ----------
             st.subheader("📦 Most Optimized Box Sizes Table")
 
-            box_summary = []
-            unique_boxes = df["Box W×H×L (mm)"].value_counts().index.tolist()
-            max_box_variety = 2 if len(editable_data) < 10 else 3
-            box_candidates = unique_boxes[:max_box_variety]
-
-            for box_size in box_candidates:
-                W, H, _ = map(int, box_size.split("×")[:3])
+            second_results = []
+            longest_profile = editable_data.sort_values("Cut Length (mm)", ascending=False).iloc[0]
+            base_box = box_lookup.get(longest_profile["Profile Name"], None)
+            if not base_box:
+                st.warning("⚠️ Could not determine base box size from longest profile.")
+            else:
+                base_W, base_H = base_box
                 for _, row in editable_data.iterrows():
-                    cut_mm = row["Cut Length (mm)"]
-                    unit_weight = row["Unit Weight (kg/m)"]
-                    weight_item = unit_weight * cut_mm / 1000
+                    profile_name = row["Profile Name"]
                     profile_width = row["Profile Width (mm)"]
                     profile_height = row["Profile Height (mm)"]
+                    cut_mm = row["Cut Length (mm)"]
+                    weight_item = row["Weight Per Item"]
+                    max_items = int(max_weight // weight_item)
+                    if max_items <= 0:
+                        max_items = 1
 
-                    max_per_layer = (W // profile_width) * (H // profile_height)
-                    if max_per_layer == 0:
-                        continue
-                    max_possible = int(max_weight // weight_item)
-                    if max_possible == 0:
-                        continue
+                    best_fit = 0
+                    best_L = None
+                    for count in range(max_items, 0, -1):
+                        for w_count, h_count in get_factor_pairs(count):
+                            for wc, hc in ((w_count, h_count), (h_count, wc)):
+                                l_count = count // (wc*hc) if wc*hc>0 else 0
+                                if wc*hc*l_count != count:
+                                    continue
+                                box_w = wc*profile_width
+                                box_h = hc*profile_height
+                                box_l = l_count*cut_mm
+                                if ceil(box_w)==base_W and ceil(box_h)==base_H:
+                                    if box_l <= max_gaylord_length:
+                                        best_fit = count
+                                        best_L = ceil(box_l)
+                                        break
+                            if best_fit:
+                                break
+                        if best_fit:
+                            break
 
-                    items_fit = min(max_possible, max_per_layer)
-                    total_weight = items_fit * weight_item
+                    if best_fit:
+                        total_weight = round(best_fit * weight_item, 2)
+                        second_results.append({
+                            "Profile Name": profile_name,
+                            "Cut Length (mm)": cut_mm,
+                            "Optimized Box Size": f"{base_W}×{base_H}×{best_L}",
+                            "Profiles per Box": best_fit,
+                            "Total Box Weight (kg)": total_weight
+                        })
 
-                    box_summary.append({
-                        "Profile Name": row["Profile Name"],
-                        "Cut Length (mm)": cut_mm,
-                        "Optimized Box Size": f"{W}×{H}×Varies",
-                        "Profiles per Box": items_fit,
-                        "Total Box Weight (kg)": round(total_weight, 2)
-                    })
-
-            if box_summary:
-                st.dataframe(pd.DataFrame(box_summary), use_container_width=True)
-            else:
-                st.warning("❌ No profiles could be packed using selected optimized box sizes.")
+                if second_results:
+                    st.dataframe(pd.DataFrame(second_results), use_container_width=True)
+                else:
+                    st.warning("❌ No profiles could be packed into base box size from longest profile.")
