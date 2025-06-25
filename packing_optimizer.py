@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from math import ceil
 from io import BytesIO
+import re
 
 st.set_page_config(page_title="📦 Profile Packing Optimizer", page_icon="📦")
 st.title("📦 Profile Packing Optimizer")
@@ -327,9 +328,15 @@ if st.button("🚀 Run Optimization", type="primary"):
             # Get all unique box sizes from the optimized results
             unique_box_sizes = {}
             for item in box_summary:
-                if item["Optimized Box Size"] != "N/A":
-                    w, h, l = map(int, item["Optimized Box Size"].split("×"))
-                    unique_box_sizes[(w, h, l)] = True
+                box_str = item.get("Optimized Box Size", "")
+                if re.fullmatch(r"\d+×\d+×\d+", box_str):
+                    try:
+                        w, h, l = map(int, box_str.split("×"))
+                        unique_box_sizes[(w, h, l)] = True
+                    except ValueError as e:
+                        print(f"Skipping invalid box size '{box_str}': {e}")
+                else:
+                    print(f"Skipping malformed box size: '{box_str}'")
             
             if unique_box_sizes:
                 # Determine largest pallet needed based on largest boxes
