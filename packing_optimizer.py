@@ -205,7 +205,7 @@ if st.button("🚀 Run Optimization", type="primary"):
                 if profile_name in profile_box_info:
                     box_info = profile_box_info[profile_name]
                     box_weight = row["Unit Weight (kg/m)"] * (row["Cut Length (mm)"]/1000) * box_info["Items per Box"]
-                    if box_weight < 0.5 * max_weight:
+                    if box_weight < 0.6 * max_weight:
                         light_profiles.append({
                             'name': profile_name,
                             'weight': box_weight,
@@ -285,3 +285,56 @@ if st.button("🚀 Run Optimization", type="primary"):
                 st.dataframe(pd.DataFrame(box_summary), use_container_width=True)
             else:
                 st.warning("❌ No profiles could be packed using selected optimized box sizes.")
+
+# ... (keep all previous code until the end of the second table section)
+
+            # ---------- 6. PALLET SIZES TABLE ----------
+            st.subheader("📊 Pallet Sizes Table")
+            
+            # Find all unique box sizes from the second table
+            box_sizes = {}
+            for item in box_summary:
+                if item["Optimized Box Size"] != "N/A":
+                    w, h, l = map(int, item["Optimized Box Size"].split("×"))
+                    box_sizes[(w, h, l)] = {
+                        "Profile Name": item["Profile Name"],
+                        "Cut Length": item["Cut Length (mm)"]
+                    }
+            
+            # Find the largest box size that will determine our pallet dimensions
+            if box_sizes:
+                largest_box = max(box_sizes.keys(), key=lambda x: (x[0], x[1], x[2]))
+                pallet_needed = {
+                    "width": min(pallet_width, largest_box[0] * (pallet_width // largest_box[0])),
+                    "length": min(pallet_length, largest_box[2] * (pallet_length // largest_box[2])),
+                    "height": min(pallet_max_height, largest_box[1] * (pallet_max_height // largest_box[1]))
+                }
+                
+                # Calculate arrangement for each box size
+                pallet_data = []
+                for (w, h, l), info in box_sizes.items():
+                    # Calculate how many boxes fit on the pallet
+                    w_fit = pallet_needed["width"] // w
+                    l_fit = pallet_needed["length"] // l
+                    h_fit = pallet_needed["height"] // h
+                    boxes_per_pallet = w_fit * l_fit * h_fit
+                    
+                    pallet_data.append({
+                        "Profile Name": info["Profile Name"],
+                        "Cut Length (mm)": info["Cut Length"],
+                        "Box Size (W×H×L)": f"{w}×{h}×{l}",
+                        "Boxes per Pallet": boxes_per_pallet,
+                        "Arrangement": f"{w_fit}×{h_fit}×{l_fit}",
+                        "Pallet Size (W×L×H)": f"{pallet_needed['width']}×{pallet_needed['length']}×{pallet_needed['height']}"
+                    })
+                
+                # Create and display the pallet table
+                pallet_df = pd.DataFrame(pallet_data)
+                st.dataframe(pallet_df, use_container_width=True)
+                
+                # Show the largest pallet needed
+                st.markdown(f"**Largest Pallet Needed:** {pallet_needed['width']}×{pallet_needed['length']}×{pallet_needed['height']} mm")
+            else:
+                st.warning("No valid box sizes found for pallet calculation")
+
+# ... (rest of the code remains the same)
