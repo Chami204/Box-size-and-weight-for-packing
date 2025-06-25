@@ -103,6 +103,9 @@ if st.button("🚀 Run Optimization", type="primary"):
                             box_w = wc*profile_width; box_h = hc*profile_height; box_l = l_count*cut_mm
                             if box_w>max_gaylord_width or box_h>max_gaylord_height or box_l>max_gaylord_length:
                                 continue
+                            wh_ratio = max(box_w, box_h) / min(box_w, box_h)
+                            if wh_ratio > 2:  # Too flat or tall
+                                continue
                             wh_diff = abs(box_w-box_h)
                             deviation = max(box_w,box_h,box_l)-min(box_w,box_h,box_l)
                             if wh_diff < best_diff or (wh_diff==best_diff and deviation<best_dev):
@@ -144,51 +147,3 @@ if st.button("🚀 Run Optimization", type="primary"):
             with pd.ExcelWriter(out, engine='openpyxl') as writer:
                 df.to_excel(writer,index=False,sheet_name='Results')
             st.download_button("📥 Download Results", out.getvalue(),"results.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-            # ---------- NEW: MOST OPTIMIZED BOX SIZES TABLE ----------
-            st.subheader("📦 Most Optimized Box Sizes Table")
-            optimized_results = []
-            base_boxes = df.sort_values("Cut Length (mm)", ascending=False)["Box W×H×L (mm)"].unique()
-            used_varieties = []
-
-            for box in base_boxes:
-                bw, bh, _ = map(int, box.split("×"))
-                if (bw, bh) in used_varieties:
-                    continue
-                temp = []
-                for _, row in editable_data.iterrows():
-                    p_w = row["Profile Width (mm)"]
-                    p_h = row["Profile Height (mm)"]
-                    cut_len = row["Cut Length (mm)"]
-                    weight_per_item = row["Weight Per Item"]
-                    w_fit = bw // p_w
-                    h_fit = bh // p_h
-                    per_layer = w_fit * h_fit
-                    if per_layer == 0:
-                        continue
-                    max_layers = int(max_weight // (per_layer * weight_per_item))
-                    if max_layers == 0:
-                        continue
-                    items = per_layer * max_layers
-                    bl = ceil(cut_len * max_layers)
-                    box_weight = round(items * weight_per_item, 2)
-                    if bw <= max_gaylord_width and bh <= max_gaylord_height and bl <= max_gaylord_length:
-                        temp.append({
-                            "Profile Name": row["Profile Name"],
-                            "Cut Length (mm)": cut_len,
-                            "Optimized Box Size (mm)": f"{bw}×{bh}×{bl}",
-                            "Items per Box": items,
-                            "Total Box Weight (kg)": box_weight
-                        })
-                if temp:
-                    optimized_results.extend(temp)
-                    used_varieties.append((bw,bh))
-                if len(used_varieties) >= (2 if len(editable_data)<10 else 3):
-                    break
-
-            df2 = pd.DataFrame(optimized_results)
-            st.dataframe(df2, use_container_width=True)
-            out2 = BytesIO()
-            with pd.ExcelWriter(out2, engine='openpyxl') as writer:
-                df2.to_excel(writer, index=False, sheet_name='Optimized Box Sizes')
-            st.download_button("📥 Download Optimized Box Sizes", out2.getvalue(),"optimized_box_sizes.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
