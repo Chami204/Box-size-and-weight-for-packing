@@ -160,22 +160,25 @@ if st.button("🚀 Run Optimization", type="primary"):
                     p_w = row["Profile Width (mm)"]
                     p_h = row["Profile Height (mm)"]
                     cut_len = row["Cut Length (mm)"]
+                    weight_per_item = row["Weight Per Item"]
                     w_fit = bw // p_w
                     h_fit = bh // p_h
                     per_layer = w_fit * h_fit
                     if per_layer == 0:
                         continue
-                    max_layers = int(max_weight // (per_layer * row["Weight Per Item"]))
+                    max_layers = int(max_weight // (per_layer * weight_per_item))
                     if max_layers == 0:
                         continue
                     items = per_layer * max_layers
                     bl = ceil(cut_len * max_layers)
+                    box_weight = round(items * weight_per_item, 2)
                     if bw <= max_gaylord_width and bh <= max_gaylord_height and bl <= max_gaylord_length:
                         temp.append({
                             "Profile Name": row["Profile Name"],
                             "Cut Length (mm)": cut_len,
                             "Optimized Box Size (mm)": f"{bw}×{bh}×{bl}",
-                            "Items per Box": items
+                            "Items per Box": items,
+                            "Total Box Weight (kg)": box_weight
                         })
                 if temp:
                     optimized_results.extend(temp)
