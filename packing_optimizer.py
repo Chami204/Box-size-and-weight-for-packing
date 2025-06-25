@@ -147,3 +147,43 @@ if st.button("🚀 Run Optimization", type="primary"):
             with pd.ExcelWriter(out, engine='openpyxl') as writer:
                 df.to_excel(writer,index=False,sheet_name='Results')
             st.download_button("📥 Download Results", out.getvalue(),"results.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+            # ---------- 5. SECOND TABLE: MOST OPTIMIZED BOX SIZES ----------
+            st.subheader("📦 Most Optimized Box Sizes Table")
+
+            box_summary = []
+            unique_boxes = df["Box W×H×L (mm)"].value_counts().index.tolist()
+            max_box_variety = 2 if len(editable_data) < 10 else 3
+            box_candidates = unique_boxes[:max_box_variety]
+
+            for box_size in box_candidates:
+                W, H, _ = map(int, box_size.split("×")[:3])
+                for _, row in editable_data.iterrows():
+                    cut_mm = row["Cut Length (mm)"]
+                    unit_weight = row["Unit Weight (kg/m)"]
+                    weight_item = unit_weight * cut_mm / 1000
+                    profile_width = row["Profile Width (mm)"]
+                    profile_height = row["Profile Height (mm)"]
+
+                    max_per_layer = (W // profile_width) * (H // profile_height)
+                    if max_per_layer == 0:
+                        continue
+                    max_possible = int(max_weight // weight_item)
+                    if max_possible == 0:
+                        continue
+
+                    items_fit = min(max_possible, max_per_layer)
+                    total_weight = items_fit * weight_item
+
+                    box_summary.append({
+                        "Profile Name": row["Profile Name"],
+                        "Cut Length (mm)": cut_mm,
+                        "Optimized Box Size": f"{W}×{H}×Varies",
+                        "Profiles per Box": items_fit,
+                        "Total Box Weight (kg)": round(total_weight, 2)
+                    })
+
+            if box_summary:
+                st.dataframe(pd.DataFrame(box_summary), use_container_width=True)
+            else:
+                st.warning("❌ No profiles could be packed using selected optimized box sizes.")
