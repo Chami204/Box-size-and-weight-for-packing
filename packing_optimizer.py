@@ -98,7 +98,7 @@ if st.button("🚀 Run Optimization", type="primary"):
                 best_count = 0
                 for count in range(max_items, 0, -1):
                     for w_count, h_count in get_factor_pairs(count):
-                        for wc, hc in ((w_count, h_count), (h_count, wc)):
+                        for wc, hc in [(w_count, h_count), (h_count, w_count)]:
                             l_count = count // (wc*hc) if wc*hc>0 else 0
                             if wc*hc*l_count != count:
                                 continue
