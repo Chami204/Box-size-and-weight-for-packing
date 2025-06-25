@@ -322,65 +322,73 @@ if st.button("🚀 Run Optimization", type="primary"):
             else:
                 st.warning("❌ No profiles could be packed using selected optimized box sizes.")
 
-                       # ---------- 6. PALLET SIZES TABLE ----------
+                                   # ---------- 6. PALLET SIZES TABLE ----------
             st.subheader("📊 Pallet Sizes Table")
             
-            # Get all valid box sizes from the optimized results
-            valid_boxes = []
-            for item in box_summary:
-                if item["Optimized Box Size"] != "N/A":
-                    try:
-                        w, h, l = map(int, item["Optimized Box Size"].split("×"))
-                        valid_boxes.append({
-                            "size": (w, h, l),
-                            "profile": item["Profile Name"],
-                            "cut_length": item["Cut Length (mm)"]
-                        })
-                    except:
-                        continue
+            # Prepare pallet data
+            pallet_data = []
             
-            if valid_boxes:
-                # Get all unique box sizes
-                unique_sizes = list(set(box["size"] for box in valid_boxes))
-                
-                # Determine largest pallet needed
-                max_box_w = max(size[0] for size in unique_sizes)
-                max_box_l = max(size[2] for size in unique_sizes)
-                max_box_h = max(size[1] for size in unique_sizes)
-                
-                # Calculate pallet dimensions needed (must fit within constraints)
-                pallet_w = min(pallet_width, max_box_w * (pallet_width // max_box_w))
-                pallet_l = min(pallet_length, max_box_l * (pallet_length // max_box_l))
-                pallet_h = min(pallet_max_height, max_box_h * (pallet_max_height // max_box_h))
-                
-                # Create pallet data for each box size
-                pallet_data = []
-                for size in unique_sizes:
-                    w, h, l = size
+            for item in box_summary:
+                if item["Optimized Box Size"] == "N/A":
+                    continue
                     
-                    # Calculate how many boxes fit on the pallet
-                    w_fit = pallet_w // w if w > 0 else 0
-                    l_fit = pallet_l // l if l > 0 else 0
-                    h_fit = pallet_h // h if h > 0 else 0
-                    boxes_per_pallet = w_fit * l_fit * h_fit
+                try:
+                    # Parse box dimensions
+                    box_w, box_h, box_l = map(int, item["Optimized Box Size"].split("×"))
                     
-                    # Find all profiles using this box size
-                    profiles = [box["profile"] for box in valid_boxes if box["size"] == size]
+                    # Calculate maximum possible arrangement on full pallet
+                    max_w_fit = pallet_width // box_w
+                    max_l_fit = pallet_length // box_l
+                    max_h_fit = pallet_max_height // box_h
+                    
+                    # Calculate possible reduced pallet sizes for better density
+                    # Option 1: Full pallet size
+                    full_pallet = {
+                        "width": pallet_width,
+                        "length": pallet_length,
+                        "height": pallet_max_height,
+                        "boxes": max_w_fit * max_l_fit * max_h_fit,
+                        "arrangement": f"{max_w_fit}×{max_l_fit}×{max_h_fit}"
+                    }
+                    
+                    # Option 2: Reduced pallet matching exact box multiples
+                    reduced_pallet = {
+                        "width": box_w * max_w_fit,
+                        "length": box_l * max_l_fit,
+                        "height": box_h * min(max_h_fit, 2),  # Limit height for stability
+                        "boxes": max_w_fit * max_l_fit * min(max_h_fit, 2),
+                        "arrangement": f"{max_w_fit}×{max_l_fit}×{min(max_h_fit, 2)}"
+                    }
+                    
+                    # Choose the best option (prioritizing full pallet if it fits well)
+                    if full_pallet["boxes"] >= reduced_pallet["boxes"] * 0.8:  # If full pallet is at least 80% as efficient
+                        pallet = full_pallet
+                    else:
+                        pallet = reduced_pallet
                     
                     pallet_data.append({
-                        "Box Size (W×H×L)": f"{w}×{h}×{l}",
-                        "Cut Length (mm)": l,  # Since box length = cut length
-                        "Profiles": ", ".join(set(profiles)),
-                        "Boxes per Pallet": boxes_per_pallet,
-                        "Arrangement": f"{w_fit}×{h_fit}×{l_fit}",
-                        "Pallet Size (W×L×H)": f"{pallet_w}×{pallet_l}×{pallet_h}"
+                        "Profile": item["Profile Name"],
+                        "Cut Length (mm)": item["Cut Length (mm)"],
+                        "Box Size": item["Optimized Box Size"],
+                        "Boxes per Pallet": pallet["boxes"],
+                        "Arrangement": pallet["arrangement"],
+                        "Pallet Size (W×L×H)": f"{pallet['width']}×{pallet['length']}×{pallet['height']}"
                     })
-                
-                # Create and display the pallet table
+                    
+                except Exception as e:
+                    st.warning(f"Could not process box size {item['Optimized Box Size']}: {str(e)}")
+                    continue
+            
+            if pallet_data:
+                # Display the pallet table
                 pallet_df = pd.DataFrame(pallet_data)
                 st.dataframe(pallet_df, use_container_width=True)
                 
-                # Show the largest pallet needed
-                st.markdown(f"**Largest Pallet Needed:** {pallet_w}×{pallet_l}×{pallet_h} mm")
+                # Calculate and display the largest pallet needed
+                max_pallet_w = max(int(size.split("×")[0]) for size in pallet_df["Pallet Size (W×L×H)"])
+                max_pallet_l = max(int(size.split("×")[1]) for size in pallet_df["Pallet Size (W×L×H)"])
+                max_pallet_h = max(int(size.split("×")[2]) for size in pallet_df["Pallet Size (W×L×H)"])
+                
+                st.markdown(f"**Largest Pallet Needed:** {max_pallet_w}×{max_pallet_l}×{max_pallet_h} mm")
             else:
                 st.warning("No valid box sizes found for pallet calculation")
